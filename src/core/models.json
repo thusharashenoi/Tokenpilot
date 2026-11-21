@@ -1,0 +1,28 @@
+{
+  "models": [
+    {
+      "id": "anthropic/claude-haiku-4-5",
+      "description": "Light and inexpensive. Lookups, definitions, and one-step questions."
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "description": "Light and inexpensive. Lookups, definitions, and one-step questions."
+    },
+    {
+      "id": "anthropic/claude-sonnet-4-5",
+      "description": "Everyday coding model for a normal edit in one area of the repository."
+    },
+    {
+      "id": "openai/gpt-4o",
+      "description": "Everyday coding model for a normal edit in one area of the repository."
+    },
+    {
+      "id": "anthropic/claude-opus-4-5",
+      "description": "Heavy design, multi-file changes, and work that also runs the shell."
+    },
+    {
+      "id": "anthropic/claude-fable-5",
+      "description": "Heavy design, multi-file changes, and work that also runs the shell."
+    }
+  ]
+}

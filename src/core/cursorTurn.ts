@@ -8,8 +8,6 @@ export type ReducedTurn = {
   userAfter: number;
   harnessBefore: number;
   harnessAfter: number;
-  graphPack: number;
-  fullFiles: number;
 };
 
 export type PendingTurns = Record<string, ReducedTurn>;
@@ -18,16 +16,21 @@ export type TurnNotice = ReducedTurn & {
   id: string;
   conversationId: string;
   status: string;
+  source?: "proxy";
+  model?: string;
+  reducedTokens?: number;
+  actualPromptTokens?: number;
+  actualCompletionTokens?: number;
+  keptTools?: string[];
+  droppedTools?: string[];
 };
 
-export function measureReducedTurn(prompt: string, graphPack: string, fullFileTokens: number): ReducedTurn {
+export function measureReducedTurn(prompt: string): ReducedTurn {
   const harness = harnessFor("cursor");
   const report = optimizeInput({
     systemPrompt: harness.systemPrompt,
     userText: prompt,
     tools: harness.tools,
-    graphPack,
-    fullFileTokens,
     agentLabel: harness.label,
   });
   const stages = report.tokens.stages;
@@ -35,11 +38,9 @@ export function measureReducedTurn(prompt: string, graphPack: string, fullFileTo
     promptTokens: report.tokens.optimized,
     baselineTokens: report.tokens.baseline,
     userBefore: stages.nlp.before,
-    userAfter: stages.toon.after,
+    userAfter: stages.nlp.after,
     harnessBefore: stages.harness.before,
     harnessAfter: stages.harness.after,
-    graphPack: stages.graph.pack,
-    fullFiles: stages.graph.fullFiles,
   };
 }
 
@@ -52,7 +53,7 @@ export function applyCursorHook(
   const event = String(input.hook_event_name ?? "");
   const conversationId = String(input.conversation_id ?? "default");
   if (event === "beforeSubmitPrompt") {
-    const turn = measured ?? measureReducedTurn(String(input.prompt ?? ""), "", 0);
+    const turn = measured ?? measureReducedTurn(String(input.prompt ?? ""));
     return {
       response: { continue: true },
       pending: { ...pending, [conversationId]: turn },
@@ -79,26 +80,47 @@ export function applyCursorHook(
   return { response: {}, pending, notice: null };
 }
 
-export function formatTokenNotice(turn: Partial<ReducedTurn> & { promptTokens: number }): string {
+function nameList(names: string[] | undefined): string {
+  if (!names || names.length === 0) {
+    return "";
+  }
+  if (names.length <= 6) {
+    return names.join(", ");
+  }
+  return `${names.slice(0, 6).join(", ")} +${names.length - 6}`;
+}
+
+export function formatTokenNotice(turn: Partial<TurnNotice> & { promptTokens: number }): string {
+  if (turn.source === "proxy") {
+    const model = turn.model ? ` on ${turn.model}` : "";
+    const reduced = turn.reducedTokens ?? turn.promptTokens;
+    const before = turn.baselineTokens ?? reduced;
+    const spent =
+      typeof turn.actualPromptTokens === "number"
+        ? `Spent ${turn.actualPromptTokens.toLocaleString("en-US")} input tokens and ${(turn.actualCompletionTokens ?? 0).toLocaleString("en-US")} output tokens${model}.`
+        : `The provider did not return usage${model}.`;
+    const tools = [
+      turn.keptTools && turn.keptTools.length > 0 ? `Kept ${nameList(turn.keptTools)}.` : "",
+      turn.droppedTools && turn.droppedTools.length > 0 ? `Dropped ${nameList(turn.droppedTools)}.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return [`${spent} Stripped the request from ${before.toLocaleString("en-US")} to ${reduced.toLocaleString("en-US")} tokens.`, tools]
+      .filter(Boolean)
+      .join(" ");
+  }
   if (
     turn.baselineTokens == null ||
     turn.userBefore == null ||
     turn.userAfter == null ||
     turn.harnessBefore == null ||
-    turn.harnessAfter == null ||
-    turn.graphPack == null ||
-    turn.fullFiles == null
+    turn.harnessAfter == null
   ) {
     return `Input tokens: ${turn.promptTokens.toLocaleString("en-US")}`;
   }
-  const graph =
-    turn.fullFiles > 0
-      ? `Graph ${turn.graphPack.toLocaleString("en-US")} instead of ${turn.fullFiles.toLocaleString("en-US")}`
-      : "No file bodies added";
   return [
     `Reduced input: ${turn.promptTokens.toLocaleString("en-US")} tokens (was ${turn.baselineTokens.toLocaleString("en-US")})`,
     `Prompt ${turn.userBefore.toLocaleString("en-US")}→${turn.userAfter.toLocaleString("en-US")}`,
     `System and tools ${turn.harnessBefore.toLocaleString("en-US")}→${turn.harnessAfter.toLocaleString("en-US")}`,
-    graph,
   ].join(". ") + ".";
 }

@@ -1,8 +1,8 @@
+import { replaceHistory } from "./history";
 import { inferToolTags, stripHarness, type ToolDef, type ToolTag } from "./harness";
-import { compactProse } from "./nlp";
 import type { TaskKind } from "./route";
 import { countTokens } from "./tokens";
-import { encodeJsonBlocks } from "./toon";
+import { condenseUserPrompt } from "./userPrompt";
 
 const APPROVAL = new Set<ToolTag>(["edit", "shell", "git"]);
 
@@ -43,18 +43,6 @@ function textOf(content: unknown): string {
       return "";
     })
     .join("");
-}
-
-function writeText(original: unknown, text: string): unknown {
-  if (typeof original === "string" || original == null) {
-    return text;
-  }
-  if (!Array.isArray(original)) {
-    return text;
-  }
-  const first = original.find((part) => part && typeof part === "object") as { type?: string } | undefined;
-  const type = first?.type === "input_text" ? "input_text" : "text";
-  return [{ type, text }];
 }
 
 function toolDef(name: string, description: string, parameters: unknown): ToolDef {
@@ -130,18 +118,80 @@ function readMessages(body: Record<string, unknown>): { kind: "chat" | "response
   return { kind: "responses", messages };
 }
 
-function groomUser(content: unknown, toon: boolean): unknown {
+function applyOverride(content: unknown, override: string): unknown {
+  const groomed = override;
+  if (!Array.isArray(content)) {
+    return groomed;
+  }
+  let used = false;
+  const next: unknown[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    const record = part as { type?: string; text?: unknown; content?: unknown };
+    const textPart = record.type === "text" || record.type === "input_text" || typeof record.text === "string";
+    if (!textPart) {
+      next.push(part);
+      continue;
+    }
+    if (used) {
+      continue;
+    }
+    used = true;
+    if (typeof record.content === "string" && typeof record.text !== "string") {
+      next.push({ ...record, content: groomed });
+    } else {
+      next.push({ ...record, text: groomed });
+    }
+  }
+  return next.length > 0 ? next : groomed;
+}
+
+function groomUser(content: unknown): unknown {
+  if (typeof content === "string" || content == null) {
+    return condenseUserPrompt(textOf(content));
+  }
+  if (!Array.isArray(content)) {
+    return condenseUserPrompt(textOf(content));
+  }
+  return content.map((part) => {
+    if (typeof part === "string") {
+      return condenseUserPrompt(part);
+    }
+    if (!part || typeof part !== "object") {
+      return part;
+    }
+    const record = part as { type?: string; text?: unknown; content?: unknown };
+    const textPart = record.type === "text" || record.type === "input_text" || typeof record.text === "string";
+    if (!textPart) {
+      return part;
+    }
+    const raw = typeof record.text === "string" ? record.text : typeof record.content === "string" ? record.content : "";
+    return { ...record, text: condenseUserPrompt(raw) };
+  });
+}
+
+function historyText(content: unknown): string {
   const text = textOf(content);
-  const groomed = compactProse(text);
-  const next = toon ? encodeJsonBlocks(groomed).text : groomed;
-  return writeText(content, next);
+  if (text.trim()) {
+    return text;
+  }
+  if (content && typeof content === "object") {
+    try {
+      return JSON.stringify(content);
+    } catch {
+      return "";
+    }
+  }
+  return "";
 }
 
-function measure(system: string, users: string[], tools: unknown): number {
-  return countTokens(`${system}\n${users.join("\n")}\n${JSON.stringify(tools ?? [])}`);
+function measure(system: string, spoken: string[], tools: unknown): number {
+  return countTokens(`${system}\n${spoken.join("\n")}\n${JSON.stringify(tools ?? [])}`);
 }
 
-export function reduceProviderPayload(body: Record<string, unknown>, graphPack = ""): ReduceReport {
+export function reduceProviderPayload(body: Record<string, unknown>, userText?: string): ReduceReport {
   const parsed = readMessages(body);
   const incomingTools = readTools(body.tools);
   const systemRaw = parsed.messages
@@ -153,19 +203,36 @@ export function reduceProviderPayload(body: Record<string, unknown>, graphPack =
     .map((message, index) => (message.role === "user" ? index : -1))
     .filter((index) => index >= 0);
   const lastUser = userIndexes.length > 0 ? userIndexes[userIndexes.length - 1] : -1;
-  const groomedUsers = parsed.messages.map((message, index) =>
-    message.role === "user" ? groomUser(message.content, index === lastUser) : message.content,
-  );
+  const groomedUsers = parsed.messages.map((message, index) => {
+    if (message.role !== "user") {
+      return message.content;
+    }
+    if (index === lastUser && userText !== undefined) {
+      return applyOverride(message.content, userText);
+    }
+    return groomUser(message.content);
+  });
   const taskText = lastUser >= 0 ? textOf(groomedUsers[lastUser]) : "";
   const stripped = stripHarness(systemRaw, incomingTools.map((tool) => tool.def), taskText);
-  const pack = graphPack.trim();
-  const system = pack ? `${stripped.systemPrompt}\n\n${pack}` : stripped.systemPrompt;
+  const system = stripped.systemPrompt;
   const keptByName = new Map(stripped.tools.map((tool) => [tool.name, tool]));
-  const shape = incomingTools.some((tool) => tool.shape === "chat") ? "chat" : "flat";
+  const shape = incomingTools.some((tool) => tool.shape === "chat") || (incomingTools.length === 0 && parsed.kind === "chat") ? "chat" : "flat";
   const tools = stripped.tools.map((tool) => emitTool(shape, keptByName.get(tool.name) ?? tool));
+  const priorTurns = parsed.messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message, index }) => message.role !== "system" && index !== lastUser)
+    .map(({ message }) => ({ role: message.role, text: historyText(message.content) }))
+    .filter((turn) => turn.text.trim());
+  const history = replaceHistory(priorTurns);
   const nextMessages: Msg[] = [{ role: "system", content: system }];
+  if (history) {
+    nextMessages.push({ role: "user", content: history });
+  }
   parsed.messages.forEach((message, index) => {
     if (message.role === "system") {
+      return;
+    }
+    if (history && index !== lastUser) {
       return;
     }
     nextMessages.push({ role: message.role, content: message.role === "user" ? groomedUsers[index] : message.content });
@@ -183,13 +250,13 @@ export function reduceProviderPayload(body: Record<string, unknown>, graphPack =
       .filter((message) => message.role !== "system")
       .map((message) => ({ type: "message", role: message.role, content: message.content }));
   }
-  if (body.tools !== undefined) {
+  if (body.tools !== undefined || tools.length > 0) {
     payload.tools = tools;
   }
-  const beforeUsers = parsed.messages.filter((message) => message.role === "user").map((message) => textOf(message.content));
-  const afterUsers = nextMessages.filter((message) => message.role === "user").map((message) => textOf(message.content));
-  const beforeTokens = measure(systemRaw, beforeUsers, body.tools ?? []);
-  const afterTokens = measure(system, afterUsers, payload.tools ?? []);
+  const beforeSpoken = parsed.messages.filter((message) => message.role !== "system").map((message) => historyText(message.content));
+  const afterSpoken = nextMessages.filter((message) => message.role !== "system").map((message) => historyText(message.content));
+  const beforeTokens = measure(systemRaw, beforeSpoken, body.tools ?? []);
+  const afterTokens = measure(system, afterSpoken, payload.tools ?? []);
   const saved = beforeTokens - afterTokens;
   return {
     task: stripped.task,

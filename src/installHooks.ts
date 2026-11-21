@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-type HookCommand = { command: string };
+type HookCommand = { command: string; timeout?: number };
 type HooksFile = { version: number; hooks: Record<string, HookCommand[]> };
 
 const EVENTS = ["beforeSubmitPrompt", "stop"];
@@ -17,7 +17,7 @@ export function installCursorHook(extensionPath: string): string {
   const current = readHooks(hooksPath);
   for (const event of EVENTS) {
     const kept = (current.hooks[event] ?? []).filter((hook) => !hook.command.includes("turn-hook.js"));
-    current.hooks[event] = [...kept, { command }];
+    current.hooks[event] = [...kept, { command, timeout: 90 }];
   }
   fs.writeFileSync(hooksPath, JSON.stringify(current, null, 2));
   return command;

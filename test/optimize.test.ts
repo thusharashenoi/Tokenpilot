@@ -37,21 +37,17 @@ test("a sample turn gets smaller and keeps the rules", () => {
     systemPrompt: DEFAULT_SYSTEM,
     userText: sampleTask(),
     tools: DEFAULT_TOOLS,
-    graphPack: "GRAPH\ncharge fn sample-repo/src/charge.ts:4-20\n  calls: writeLedger\n",
-    fullFileTokens: 900,
   });
   assert.ok(report.tokens.optimized < report.tokens.baseline);
   assert.ok(report.userText.includes("don't change the public charge() signature"));
   assert.ok(report.userText.includes("never log the card number"));
   assert.equal(report.userText.includes("Thanks so much"), false);
   assert.equal(report.userText.includes("I was wondering"), false);
-  assert.match(report.userText, /items\[24\]\{sku,name,qty,price\}:/);
   assert.ok(report.userText.includes("SKU-1"));
-  assert.equal(report.userText.includes('"sku":'), false);
   assert.equal(report.systemPrompt.includes("EXAMPLE_SENTINEL_do_not_keep"), false);
   assert.ok(report.systemPrompt.includes("require explicit user approval"));
   assert.ok(report.systemPrompt.includes("local model"));
-  assert.ok(report.systemPrompt.includes("calls: writeLedger"));
+  assert.equal(report.systemPrompt.includes("calls: writeLedger"), false);
   assert.deepEqual(
     report.tools.map((tool) => tool.name).sort(),
     ["apply_edit", "graph_query", "read_file", "search_repo"],
@@ -63,9 +59,7 @@ test("a sample turn gets smaller and keeps the rules", () => {
   assert.match(popup.detail, new RegExp(`Before optimization: ${report.tokens.baseline}`));
   assert.match(popup.detail, new RegExp(`After optimization: ${report.tokens.optimized}`));
   assert.match(popup.detail, /Task text: \d+ → \d+/);
-  assert.match(popup.detail, /TOON: \d+ → \d+/);
   assert.match(popup.detail, /Harness and tools: \d+ → \d+/);
-  assert.match(popup.detail, /Graph pack: \d+/);
   assert.match(popup.detail, /The provider counted \d+ input tokens on openai\/gpt-4o\./);
 });
 

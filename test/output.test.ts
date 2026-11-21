@@ -14,8 +14,6 @@ test("the objective contract is appended after input optimization", () => {
     systemPrompt: "You are a coding agent.\n\n## Response style\nBe warm and verbose.",
     userText: "Please update checkout so guests can pay.\nDon't change charge().",
     tools: [],
-    graphPack: "",
-    fullFileTokens: 0,
   });
   const aligned = alignObjective(report.messages, {
     task: report.task,

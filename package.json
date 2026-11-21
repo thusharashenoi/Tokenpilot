@@ -1,7 +1,7 @@
 {
   "name": "tokenpilot",
   "displayName": "TokenPilot",
-    "description": "Shrinks the chat turn, then aligns the prompt to the task and shortens the reply that gets stored.",
+    "description": "Shrinks a chat turn, attaches the tools it needs, aligns the prompt to the task, and shortens the stored reply.",
   "version": "0.1.0",
   "private": true,
   "publisher": "tokenpilot",
@@ -14,11 +14,11 @@
   "main": "./dist/extension.js",
   "activationEvents": ["onStartupFinished"],
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:typescript --format=cjs --platform=node --sourcemap && esbuild src/hookEntry.ts --bundle --outfile=dist/turn-hook.js --format=cjs --platform=node && esbuild src/reduceCli.ts --bundle --outfile=dist/reduce.js --format=cjs --platform=node",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:typescript --format=cjs --platform=node --sourcemap && esbuild src/hookEntry.ts --bundle --outfile=dist/turn-hook.js --format=cjs --platform=node && esbuild src/reduceCli.ts --bundle --outfile=dist/reduce.js --format=cjs --platform=node && esbuild src/proxyEntry.ts --bundle --outfile=dist/proxy.js --format=cjs --platform=node",
     "reduce": "esbuild src/reduceCli.ts --bundle --outfile=dist/reduce.js --format=cjs --platform=node && node dist/reduce.js",
     "watch": "npm run build -- --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit && esbuild test/optimize.test.ts test/graph.test.ts test/bifrost.test.ts test/hook.test.ts test/harness.test.ts test/reduce.test.ts test/output.test.ts --bundle --outdir=dist-test --outbase=test --platform=node --format=cjs --external:typescript && node --test dist-test/optimize.test.js dist-test/graph.test.js dist-test/bifrost.test.js dist-test/hook.test.js dist-test/harness.test.js dist-test/reduce.test.js dist-test/output.test.js"
+    "test": "tsc --noEmit && esbuild test/optimize.test.ts test/graph.test.ts test/bifrost.test.ts test/hook.test.ts test/harness.test.ts test/reduce.test.ts test/output.test.ts test/proxy.test.ts test/ide.test.ts test/userPrompt.test.ts test/history.test.ts test/jev.test.ts test/modelCatalog.test.ts --bundle --outdir=dist-test --outbase=test --platform=node --format=cjs --external:typescript && node --test dist-test/optimize.test.js dist-test/graph.test.js dist-test/bifrost.test.js dist-test/hook.test.js dist-test/harness.test.js dist-test/reduce.test.js dist-test/output.test.js dist-test/proxy.test.js dist-test/ide.test.js dist-test/userPrompt.test.js dist-test/history.test.js dist-test/jev.test.js dist-test/modelCatalog.test.js"
   },
   "dependencies": {
     "@toon-format/toon": "^2.1.0",
@@ -38,8 +38,8 @@
         "category": "TokenPilot"
       },
       {
-        "command": "tokenpilot.reindex",
-        "title": "Rebuild Code Graph",
+        "command": "tokenpilot.proxyUrl",
+        "title": "Copy Proxy URL",
         "category": "TokenPilot"
       },
       {
@@ -79,6 +79,22 @@
           "default": "/v1/chat/completions",
           "description": "Chat completions path. Use /openai/v1/chat/completions if the gateway only exposes the OpenAI prefix."
         },
+        "tokenpilot.bifrostKey": {
+          "type": "string",
+          "default": "",
+          "description": "Bifrost virtual key. When set, the proxy sends it as the bearer token. When empty, the key from Cursor is forwarded."
+        },
+        "tokenpilot.proxyEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the local proxy that strips each request before forwarding it to Bifrost."
+        },
+        "tokenpilot.proxyPort": {
+          "type": "number",
+          "default": 8787,
+          "minimum": 1,
+          "description": "Port for the local proxy. In Cursor, set the OpenAI base URL to http://127.0.0.1:<port>/v1 and add the Bifrost model ids."
+        },
         "tokenpilot.localUrl": {
           "type": "string",
           "default": "http://localhost:11434",
@@ -89,15 +105,20 @@
           "default": "qwen2.5-coder:7b",
           "description": "Model id sent to the local server. Confidential repositories use only this model."
         },
+        "tokenpilot.rewriteModel": {
+          "type": "string",
+          "default": "qwen2.5:0.5b",
+          "description": "Small open model on tokenpilot.localUrl that rewrites the user prompt before it is sent. Pull it with: ollama pull qwen2.5:0.5b. If it is not running, the prompt is still condensed locally."
+        },
         "tokenpilot.smallModel": {
           "type": "string",
-          "default": "openai/gpt-4o-mini",
-          "description": "Bifrost provider/model for lookup tasks."
+          "default": "gemini/gemini-3.5-flash-lite",
+          "description": "Fallback Bifrost model for a light task when the gateway model list cannot be read."
         },
         "tokenpilot.strongModel": {
           "type": "string",
-          "default": "openai/gpt-4o",
-          "description": "Bifrost provider/model for edits and design tasks."
+          "default": "gemini/gemini-3.5-flash-lite",
+          "description": "Fallback Bifrost model for an edit or design task when the gateway model list cannot be read."
         },
         "tokenpilot.budgetUsd": {
           "type": "number",

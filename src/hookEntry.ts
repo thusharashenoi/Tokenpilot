@@ -1,8 +1,8 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { applyCursorHook, measureReducedTurn, type PendingTurns, type ReducedTurn } from "./core/cursorTurn";
-import { GraphIndex } from "./core/graph";
+import { applyCursorHook, measureReducedTurn, type PendingTurns } from "./core/cursorTurn";
+import { decideIdeHook, defaultEndpointFile } from "./core/ideClient";
 
 function stateDir(): string {
   return process.env.TOKENPILOT_STATE_DIR || path.join(os.homedir(), ".cursor", "tokenpilot");
@@ -42,28 +42,27 @@ async function main(): Promise<void> {
   fs.mkdirSync(dir, { recursive: true });
   const pendingPath = path.join(dir, "pending.json");
   const pending = readJson<PendingTurns>(pendingPath, {});
-  const measured = input.hook_event_name === "beforeSubmitPrompt" ? measureWorkspace(input) : undefined;
+  if (input.hook_event_name === "beforeSubmitPrompt") {
+    const decision = await decideIdeHook({
+      endpointFile: defaultEndpointFile(),
+      prompt: String(input.prompt ?? ""),
+      conversationId: String(input.conversation_id ?? "default"),
+    });
+    if (!decision.continue) {
+      const conversationId = String(input.conversation_id ?? "default");
+      if (pending[conversationId]) {
+        const rest = { ...pending };
+        delete rest[conversationId];
+        writeJson(pendingPath, rest);
+      }
+      process.stdout.write(JSON.stringify(decision));
+      return;
+    }
+  }
+  const measured = input.hook_event_name === "beforeSubmitPrompt" ? measureReducedTurn(String(input.prompt ?? "")) : undefined;
   const result = applyCursorHook(input, pending, Date.now(), measured);
   writeJson(pendingPath, result.pending);
-  if (result.notice) {
-    writeJson(path.join(dir, "latest.json"), result.notice);
-  }
   process.stdout.write(JSON.stringify(result.response));
-}
-
-function measureWorkspace(input: Record<string, unknown>): ReducedTurn {
-  const roots = input.workspace_roots;
-  const root = Array.isArray(roots) && typeof roots[0] === "string" ? roots[0] : process.env.CURSOR_PROJECT_DIR || "";
-  let graphPack = "";
-  let fullFileTokens = 0;
-  if (root) {
-    const index = new GraphIndex();
-    index.load(root);
-    const hit = index.queryText(String(input.prompt ?? ""));
-    graphPack = hit.pack;
-    fullFileTokens = hit.fullFileTokens;
-  }
-  return measureReducedTurn(String(input.prompt ?? ""), graphPack, fullFileTokens);
 }
 
 main().catch((error: unknown) => {

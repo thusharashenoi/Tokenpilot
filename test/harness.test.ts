@@ -12,8 +12,6 @@ function names(agent: AgentId, prompt: string): string[] {
     systemPrompt: harness.systemPrompt,
     userText: prompt,
     tools: harness.tools,
-    graphPack: "",
-    fullFileTokens: 400,
     agentLabel: harness.label,
   });
   return report.tools.map((tool) => tool.name);
@@ -26,8 +24,6 @@ test("each product harness drops boilerplate and keeps the rules", () => {
       systemPrompt: harness.systemPrompt,
       userText: "Add a submit button to the form.",
       tools: harness.tools,
-      graphPack: "",
-      fullFileTokens: 400,
       agentLabel: harness.label,
     });
     assert.ok(report.tokens.optimized < report.tokens.baseline, agent);
@@ -111,8 +107,6 @@ test("a named extra tool is kept and writes still need approval", () => {
     systemPrompt: harness.systemPrompt,
     userText: "Add a submit button, and use GenerateImage for the empty state.",
     tools: [...harness.tools, defineExternalTool("dance", "Dance between files. Then do it again.", { type: "object", properties: {} })],
-    graphPack: "",
-    fullFileTokens: 0,
   });
   assert.ok(report.tools.some((tool) => tool.name === "GenerateImage"));
   assert.equal(report.tools.some((tool) => tool.name === "dance"), false);

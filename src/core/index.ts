@@ -33,3 +33,15 @@ export {
 export { sampleTask } from "./sample";
 export { countTokens } from "./tokens";
 export type { ChatMessage } from "./types";
+export { compactHistory, replaceHistory, type HistoryFact, type HistoryPack, type HistoryTurn } from "./history";
+export { jevAttach, type JevAttachment } from "./jev";
+export {
+  applyCatalogChoice,
+  gradeTask,
+  listGatewayModels,
+  pickCatalogModel,
+  type CatalogModel,
+  type ModelChoice,
+  type TaskGrade,
+} from "./modelCatalog";
+export { condenseUserPrompt, rewriteUserPrompt, DEFAULT_REWRITE_MODEL, type RewriteOptions } from "./userPrompt";

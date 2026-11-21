@@ -1,9 +1,8 @@
 import { stripHarness, type ToolDef } from "./harness";
-import { compactProse } from "./nlp";
 import type { TaskKind } from "./route";
 import { countTokens } from "./tokens";
-import { encodeJsonBlocks } from "./toon";
 import type { ChatMessage } from "./types";
+import { condenseUserPrompt } from "./userPrompt";
 
 export type { ChatMessage };
 
@@ -11,9 +10,8 @@ export type OptimizeInput = {
   systemPrompt: string;
   userText: string;
   tools: ToolDef[];
-  graphPack: string;
-  fullFileTokens: number;
   agentLabel?: string;
+  rewrittenUserText?: string;
 };
 
 export type OptimizeReport = {
@@ -32,9 +30,7 @@ export type OptimizeReport = {
     savedPct: number;
     stages: {
       nlp: { before: number; after: number };
-      toon: { before: number; after: number };
       harness: { before: number; after: number };
-      graph: { fullFiles: number; pack: number };
     };
   };
 };
@@ -48,43 +44,32 @@ function countToolTokens(tools: ToolDef[]): number {
 
 export function optimizeInput(input: OptimizeInput): OptimizeReport {
   const nlpBefore = countTokens(input.userText);
-  const compacted = compactProse(input.userText);
+  const compacted = input.rewrittenUserText?.trim() ? input.rewrittenUserText : condenseUserPrompt(input.userText);
   const nlpAfter = countTokens(compacted);
-  const tooned = encodeJsonBlocks(compacted);
-  const toonAfter = countTokens(tooned.text);
   const harnessBefore = countTokens(input.systemPrompt) + countToolTokens(input.tools);
-  const stripped = stripHarness(input.systemPrompt, input.tools, tooned.text);
-  const pack = input.graphPack.trim();
-  const packTokens = pack ? countTokens(pack) : 0;
-  const systemPrompt = pack ? `${stripped.systemPrompt}\n\n${pack}` : stripped.systemPrompt;
-  const harnessAfter = countTokens(stripped.systemPrompt) + countToolTokens(stripped.tools);
-  const baseline = countTokens(input.systemPrompt) + nlpBefore + countToolTokens(input.tools) + input.fullFileTokens;
-  const optimized = countTokens(systemPrompt) + toonAfter + countToolTokens(stripped.tools);
+  const stripped = stripHarness(input.systemPrompt, input.tools, compacted);
+  const systemPrompt = stripped.systemPrompt;
+  const harnessAfter = countTokens(systemPrompt) + countToolTokens(stripped.tools);
+  const baseline = countTokens(input.systemPrompt) + nlpBefore + countToolTokens(input.tools);
+  const optimized = countTokens(systemPrompt) + nlpAfter + countToolTokens(stripped.tools);
   const saved = baseline - optimized;
   const actions = [
     nlpBefore === nlpAfter
       ? "Task text kept. Nothing safe to remove."
       : `Task text ${nlpBefore} → ${nlpAfter} tokens.`,
-    tooned.saved > 0
-      ? `JSON encoded as TOON. ${nlpAfter} → ${toonAfter} tokens.`
-      : "No JSON block was large enough to encode as TOON.",
     `${input.agentLabel ?? "Harness"} kept ${stripped.tools.length} of ${input.tools.length} tools.`,
+    `JEV attached ${stripped.tools.map((tool) => tool.name).join(", ") || "no tools"}.`,
   ];
   if (stripped.dropped.length > 0) {
     actions.push(`Dropped ${stripped.dropped.join(", ")}.`);
   }
-  actions.push(
-    input.fullFileTokens > 0
-      ? `Graph pack is ${packTokens} tokens. The full files are ${input.fullFileTokens}.`
-      : "No graph symbols matched this task. No file bodies were added.",
-  );
   return {
     systemPrompt,
-    userText: tooned.text,
+    userText: compacted,
     tools: stripped.tools,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: tooned.text },
+      { role: "user", content: compacted },
     ],
     task: stripped.task,
     agentLabel: input.agentLabel,
@@ -97,9 +82,7 @@ export function optimizeInput(input: OptimizeInput): OptimizeReport {
       savedPct: baseline === 0 ? 0 : Math.round((saved / baseline) * 100),
       stages: {
         nlp: { before: nlpBefore, after: nlpAfter },
-        toon: { before: nlpAfter, after: toonAfter },
         harness: { before: harnessBefore, after: harnessAfter },
-        graph: { fullFiles: input.fullFileTokens, pack: packTokens },
       },
     },
   };
@@ -117,10 +100,7 @@ export function formatTokenPopup(
     `Saved: ${tokens.saved} (${tokens.savedPct}%)`,
     "",
     `Task text: ${stages.nlp.before} → ${stages.nlp.after}`,
-    `TOON: ${stages.toon.before} → ${stages.toon.after}`,
     `Harness and tools: ${stages.harness.before} → ${stages.harness.after}`,
-    `Graph pack: ${stages.graph.pack}`,
-    `Full files: ${stages.graph.fullFiles}`,
   ];
   if (actual) {
     lines.push("", `The provider counted ${actual.promptTokens} input tokens on ${actual.model}.`);

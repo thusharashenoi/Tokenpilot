@@ -13,6 +13,7 @@ export type BifrostRequest = {
   maxTokens?: number;
   reasoningEffort?: "low" | "medium";
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 };
 
 export type BifrostResult = {
@@ -106,11 +107,18 @@ export async function sendViaBifrost(input: BifrostRequest): Promise<BifrostResu
       }
       return await readSuccess(response, attempt.model, index > 0);
     } catch (error) {
+      if (input.signal?.aborted) {
+        throw error;
+      }
       if (error instanceof Error && error.message.startsWith("Model ")) {
         throw error;
       }
       lastError = error instanceof Error ? error.message : lastError;
     }
+  }
+
+  if (input.signal?.aborted) {
+    throw new Error("The IDE prompt was cancelled.");
   }
 
   if (input.via === "bifrost" && input.localBaseUrl && input.localModel) {
@@ -156,6 +164,7 @@ async function post(
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal: input.signal,
   });
 }
 

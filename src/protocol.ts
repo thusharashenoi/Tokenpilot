@@ -1,5 +1,4 @@
 import type { AgentId } from "./core/agents";
-import type { GraphHit, GraphStats } from "./core/graph";
 import type { AlignedTurn } from "./core/objective";
 import type { OptimizeReport } from "./core/optimize";
 import type { RouteDecision } from "./core/route";
@@ -25,24 +24,19 @@ export type WebviewToHost =
       smallModel?: string;
       strongModel?: string;
     }
-  | { type: "send" }
-  | { type: "reindex" }
-  | { type: "lookup"; name: string }
   | { type: "sample" }
   | { type: "resetSpend" };
 
 export type HostToWebview =
   | {
       type: "state";
-      stats: GraphStats;
       userId: string;
       budgetUsd: number;
       spentUsd: number;
       confidential: boolean;
       models: { local: string; small: string; strong: string };
     }
-  | { type: "report"; report: OptimizeReport; route: RouteDecision; hit: GraphHit; output: OutputPreview }
-  | { type: "lookup"; hit: GraphHit }
+  | { type: "report"; report: OptimizeReport; route: RouteDecision; output?: OutputPreview }
   | { type: "prefill"; prompt: string }
   | {
       type: "sent";
