@@ -12,6 +12,7 @@ export {
   toOpenAITools,
   type ToolDef,
 } from "./harness";
+export { distillHarness, type DistillOptions } from "./harnessDistill";
 export { compactProse } from "./nlp";
 export { reduceProviderPayload, type ReduceReport } from "./reduce";
 export { formatTokenPopup, optimizeInput, type OptimizeReport } from "./optimize";

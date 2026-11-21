@@ -4,3 +4,10 @@ dist-test/
 *.vsix
 .DS_Store
 problem_explanation_q2jha91frd9.pdf
+
+# Bifrost setup (lives outside repo)
+bifrost/
+*.env
+.env.*
+bifrost.db
+bifrost.db-*

@@ -1,5 +1,7 @@
 import { harnessFor } from "./agents";
-import { optimizeInput } from "./optimize";
+import { stripHarness, type ToolDef } from "./harness";
+import { countTokens } from "./tokens";
+import { condenseUserPrompt } from "./userPrompt";
 
 export type ReducedTurn = {
   promptTokens: number;
@@ -27,21 +29,31 @@ export type TurnNotice = ReducedTurn & {
 
 export function measureReducedTurn(prompt: string): ReducedTurn {
   const harness = harnessFor("cursor");
-  const report = optimizeInput({
-    systemPrompt: harness.systemPrompt,
-    userText: prompt,
-    tools: harness.tools,
-    agentLabel: harness.label,
-  });
-  const stages = report.tokens.stages;
+  // Sync version for hook measurements (no distillation)
+  const nlpBefore = countTokens(prompt);
+  const compacted = condenseUserPrompt(prompt);
+  const nlpAfter = countTokens(compacted);
+  const harnessBefore = countTokens(harness.systemPrompt) + countToolTokens(harness.tools);
+  const stripped = stripHarness(harness.systemPrompt, harness.tools, compacted);
+  const harnessAfter = countTokens(stripped.systemPrompt) + countToolTokens(stripped.tools);
+  const baseline = countTokens(harness.systemPrompt) + nlpBefore + countToolTokens(harness.tools);
+  const optimized = countTokens(stripped.systemPrompt) + nlpAfter + countToolTokens(stripped.tools);
+  
   return {
-    promptTokens: report.tokens.optimized,
-    baselineTokens: report.tokens.baseline,
-    userBefore: stages.nlp.before,
-    userAfter: stages.nlp.after,
-    harnessBefore: stages.harness.before,
-    harnessAfter: stages.harness.after,
+    promptTokens: optimized,
+    baselineTokens: baseline,
+    userBefore: nlpBefore,
+    userAfter: nlpAfter,
+    harnessBefore,
+    harnessAfter,
   };
+}
+
+function countToolTokens(tools: ToolDef[]): number {
+  if (tools.length === 0) {
+    return 0;
+  }
+  return countTokens(tools.map((tool) => `${tool.name} ${tool.description} ${JSON.stringify(tool.parameters ?? {})}`).join("\n"));
 }
 
 export function applyCursorHook(

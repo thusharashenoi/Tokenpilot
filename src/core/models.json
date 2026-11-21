@@ -9,6 +9,10 @@
       "description": "Light and inexpensive. Lookups, definitions, and one-step questions."
     },
     {
+      "id": "google/gemini-1.5-flash",
+      "description": "Light and fast Google model. Quick responses and simple coding tasks."
+    },
+    {
       "id": "anthropic/claude-sonnet-4-5",
       "description": "Everyday coding model for a normal edit in one area of the repository."
     },
@@ -17,12 +21,32 @@
       "description": "Everyday coding model for a normal edit in one area of the repository."
     },
     {
+      "id": "google/gemini-1.5-pro",
+      "description": "Everyday coding model. Strong reasoning and code generation."
+    },
+    {
+      "id": "google/gemini-2.0-flash-exp",
+      "description": "Latest experimental Gemini model. Fast with enhanced capabilities."
+    },
+    {
       "id": "anthropic/claude-opus-4-5",
       "description": "Heavy design, multi-file changes, and work that also runs the shell."
     },
     {
       "id": "anthropic/claude-fable-5",
       "description": "Heavy design, multi-file changes, and work that also runs the shell."
+    },
+    {
+      "id": "ollama/llama3.2",
+      "description": "Local Llama 3.2 model. Free, private, and runs offline."
+    },
+    {
+      "id": "ollama/qwen2.5-coder",
+      "description": "Local Qwen 2.5 Coder model. Optimized for code generation."
+    },
+    {
+      "id": "ollama/deepseek-coder-v2",
+      "description": "Local DeepSeek Coder v2 model. Advanced code understanding."
     }
   ]
 }

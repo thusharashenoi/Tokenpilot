@@ -25,7 +25,7 @@ export class TokenPilotSession {
   private readonly listeners = new Set<(message: HostToWebview) => void>();
   private panel: vscode.WebviewPanel | undefined;
   private last: {
-    report: ReturnType<typeof optimizeInput>;
+    report: Awaited<ReturnType<typeof optimizeInput>>;
     route: ReturnType<typeof routeTurn>;
     limit: number;
   } | null = null;
@@ -95,13 +95,22 @@ export class TokenPilotSession {
     const harness = harnessFor(selected);
     const limit = Number.isFinite(budgetUsd) && budgetUsd >= 0 ? budgetUsd : this.budgetLimit();
     const rewritten = await this.rewriteTask(task);
-    const report = optimizeInput({
+    
+    const config = vscode.workspace.getConfiguration("tokenpilot");
+    const useDistillation = config.get<boolean>("distillHarness", true);
+    
+    const report = await optimizeInput({
       systemPrompt: harness.systemPrompt,
       userText: task,
       rewrittenUserText: rewritten,
       tools: harness.tools,
       agentLabel: harness.label,
+      distillHarness: useDistillation ? {
+        url: config.get<string>("localUrl") || "http://localhost:11434",
+        model: config.get<string>("distillModel") || "qwen2.5:0.5b",
+      } : undefined,
     });
+    
     const route = await this.withCatalog(
       routeTurn({
         confidential,
@@ -133,13 +142,21 @@ export class TokenPilotSession {
     if (signal?.aborted) {
       throw new Error("The IDE prompt was cancelled.");
     }
-    const report = optimizeInput({
+    
+    const useDistillation = config.get<boolean>("distillHarness", true);
+    
+    const report = await optimizeInput({
       systemPrompt: harness.systemPrompt,
       userText: task,
       rewrittenUserText: rewritten,
       tools: harness.tools,
       agentLabel: harness.label,
+      distillHarness: useDistillation ? {
+        url: config.get<string>("localUrl") || "http://localhost:11434",
+        model: config.get<string>("distillModel") || "qwen2.5:0.5b",
+      } : undefined,
     });
+    
     const route = await this.withCatalog(
       routeTurn({
         confidential: config.get<boolean>("confidential", false),
@@ -210,7 +227,7 @@ export class TokenPilotSession {
   }
 
   private showTokenPopup(
-    report: ReturnType<typeof optimizeInput>,
+    report: Awaited<ReturnType<typeof optimizeInput>>,
     actual?: { promptTokens: number; model: string },
   ): void {
     const popup = formatTokenPopup(report, actual);

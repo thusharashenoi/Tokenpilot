@@ -105,6 +105,16 @@
           "default": "qwen2.5:0.5b",
           "description": "Small open model on tokenpilot.localUrl that rewrites the user prompt before it is sent. Pull it with: ollama pull qwen2.5:0.5b. If it is not running, the prompt is still condensed locally."
         },
+        "tokenpilot.distillHarness": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use LLM to intelligently distill the system harness based on the task. This creates a minimal, task-specific harness instead of rule-based stripping. Requires Ollama."
+        },
+        "tokenpilot.distillModel": {
+          "type": "string",
+          "default": "qwen2.5:0.5b",
+          "description": "Model used to distill the system harness. Uses the same model as rewriteModel by default."
+        },
         "tokenpilot.smallModel": {
           "type": "string",
           "default": "openai/gpt-4o-mini",
