@@ -1,0 +1,116 @@
+{
+  "name": "tokenpilot",
+  "displayName": "TokenPilot",
+    "description": "Builds a smaller chat turn from the code graph, routes it by task and budget, and shows the input token count.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "tokenpilot",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": ["workspace"],
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --external:typescript --format=cjs --platform=node --sourcemap && esbuild src/hookEntry.ts --bundle --outfile=dist/turn-hook.js --format=cjs --platform=node && esbuild src/reduceCli.ts --bundle --outfile=dist/reduce.js --format=cjs --platform=node",
+    "reduce": "esbuild src/reduceCli.ts --bundle --outfile=dist/reduce.js --format=cjs --platform=node && node dist/reduce.js",
+    "watch": "npm run build -- --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit && esbuild test/optimize.test.ts test/graph.test.ts test/bifrost.test.ts test/hook.test.ts test/harness.test.ts test/reduce.test.ts --bundle --outdir=dist-test --outbase=test --platform=node --format=cjs --external:typescript && node --test dist-test/optimize.test.js dist-test/graph.test.js dist-test/bifrost.test.js dist-test/hook.test.js dist-test/harness.test.js dist-test/reduce.test.js"
+  },
+  "dependencies": {
+    "@toon-format/toon": "^2.1.0",
+    "gpt-tokenizer": "^2.9.0",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.2"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "tokenpilot.open",
+        "title": "Open Bench",
+        "category": "TokenPilot"
+      },
+      {
+        "command": "tokenpilot.reindex",
+        "title": "Rebuild Code Graph",
+        "category": "TokenPilot"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tokenpilot",
+          "title": "TokenPilot",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "tokenpilot": [
+        {
+          "type": "webview",
+          "id": "tokenpilot.benchView",
+          "name": "Bench"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "TokenPilot",
+      "properties": {
+        "tokenpilot.bifrostUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Bifrost gateway origin, without a path."
+        },
+        "tokenpilot.bifrostPath": {
+          "type": "string",
+          "default": "/v1/chat/completions",
+          "description": "Chat completions path. Use /openai/v1/chat/completions if the gateway only exposes the OpenAI prefix."
+        },
+        "tokenpilot.localUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "OpenAI-compatible origin for the local model. Ollama listens on port 11434."
+        },
+        "tokenpilot.localModel": {
+          "type": "string",
+          "default": "qwen2.5-coder:7b",
+          "description": "Model id sent to the local server. Confidential repositories use only this model."
+        },
+        "tokenpilot.smallModel": {
+          "type": "string",
+          "default": "openai/gpt-4o-mini",
+          "description": "Bifrost provider/model for lookup tasks."
+        },
+        "tokenpilot.strongModel": {
+          "type": "string",
+          "default": "openai/gpt-4o",
+          "description": "Bifrost provider/model for edits and design tasks."
+        },
+        "tokenpilot.budgetUsd": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "description": "Spending limit for the current user, in USD."
+        },
+        "tokenpilot.userId": {
+          "type": "string",
+          "default": "",
+          "description": "User id for the spending ledger. Empty uses the OS user name."
+        },
+        "tokenpilot.confidential": {
+          "type": "boolean",
+          "default": false,
+          "description": "Treat the open workspace as a confidential repository."
+        }
+      }
+    }
+  }
+}

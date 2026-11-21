@@ -1,0 +1,10 @@
+src/**
+test/**
+sample-repo/**
+hackculturee/**
+node_modules/**
+dist-test/**
+**/*.map
+.gitignore
+tsconfig.json
+.vscode/**
