@@ -34,16 +34,18 @@ export type CustomPrompt = {
   promptBefore: number;
   promptAfter: number;
   stages: string;
+  draft: string;
 };
 
-export function stageLabel(source: RewriteTrace["source"] | "skipped", toonSaved: number): string {
+export function stageLabel(source: RewriteTrace["source"] | "skipped", toonSaved: number, reason = ""): string {
+  const detail = reason.replace(/\s+/g, " ").trim().slice(0, 80);
   const rewrite =
     source === "kept"
       ? "ollama kept the draft"
       : source === "dropped"
         ? "ollama ran, draft dropped"
         : source === "failed"
-          ? "ollama failed, condenser kept"
+          ? `ollama failed${detail ? `: ${detail}` : ""}, condenser kept`
           : "ollama skipped";
   return `${rewrite}, toon ${toonSaved}`;
 }
@@ -80,6 +82,7 @@ export async function buildCustomPrompt(task: string, options: RewriteOptions = 
       promptBefore: cursorRequestTokens(task),
       promptAfter: countTokens(`${GREETING_HARNESS}\n${user}`),
       stages: stageLabel("skipped", 0),
+      draft: "",
     };
   }
   const traced = await traceUserPrompt(task, options);
@@ -90,7 +93,8 @@ export async function buildCustomPrompt(task: string, options: RewriteOptions = 
     user,
     promptBefore: cursorRequestTokens(task),
     promptAfter: countTokens(`${CUSTOM_HARNESS}\n${user}`),
-    stages: stageLabel(traced.source, packed.saved),
+    stages: stageLabel(traced.source, packed.saved, traced.reason),
+    draft: traced.draft,
   };
 }
 
@@ -171,6 +175,7 @@ export async function runCustomHarness(input: {
         prompt_tokens: prepared.promptAfter,
         completion_tokens: completion,
       },
+      tokenpilot: { rewrite: prepared.draft },
     },
   };
 }

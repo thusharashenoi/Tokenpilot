@@ -9,6 +9,7 @@ type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   meta?: string;
+  rewrite?: string;
   pending?: boolean;
 };
 
@@ -62,6 +63,7 @@ export class ChatSession {
       pending.meta = card.error
         ? undefined
         : `${mode === "tokenpilot" ? "Custom harness" : "Cursor harness"} · ${card.model} · prompt ${card.promptBefore} → ${card.promptAfter} · completion ${card.completionTokens ?? "—"}${card.stages ? ` · ${card.stages}` : ""}`;
+      pending.rewrite = card.error ? undefined : card.rewrite || undefined;
     } catch (error) {
       pending.pending = false;
       pending.text = error instanceof Error ? error.message : "The send failed.";
@@ -87,6 +89,7 @@ export class ChatSession {
     promptAfter: number;
     completionTokens: number | null;
     stages: string | null;
+    rewrite: string;
     reply: string;
     error: string | null;
   }> {
@@ -112,6 +115,7 @@ export class ChatSession {
       choices?: Array<{ message?: { content?: string } }>;
       error?: { message?: string };
       model?: string;
+      tokenpilot?: { rewrite?: string };
     };
     const header = (name: string): number | null => {
       const raw = response.headers.get(name);
@@ -127,6 +131,7 @@ export class ChatSession {
       promptAfter: header("x-tokenpilot-prompt-after") ?? 0,
       completionTokens: header("x-tokenpilot-completion"),
       stages: response.headers.get("x-tokenpilot-stages"),
+      rewrite: payload.tokenpilot?.rewrite ?? "",
       reply: payload.choices?.[0]?.message?.content ?? "",
       error: payload.error?.message ?? (response.ok ? null : `HTTP ${response.status}`),
     };
@@ -180,6 +185,7 @@ function chatHtml(cspSource: string, nonce: string): string {
     .user .bubble { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-bottom-right-radius: 4px; max-width: 85%; }
     .assistant .bubble { background: transparent; padding-left: 0; }
     .meta { color: var(--vscode-descriptionForeground); font-size: 11px; margin-top: 4px; }
+    .draft { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 6px; white-space: pre-wrap; }
     .pending { color: var(--vscode-descriptionForeground); }
     form { margin: 0 auto; width: min(720px, calc(100% - 20px)); border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.45)); border-radius: 12px; padding: 8px; margin-bottom: 12px; background: var(--vscode-input-background); }
     .route-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -238,7 +244,8 @@ function chatHtml(cspSource: string, nonce: string): string {
       }
       log.innerHTML = messages.map(function (message) {
         const meta = message.meta ? "<div class='meta'>" + esc(message.meta) + "</div>" : "";
-        return "<div class='msg " + message.role + "'><div><div class='bubble" + (message.pending ? " pending" : "") + "'>" + esc(message.text) + "</div>" + meta + "</div></div>";
+        const draft = message.rewrite ? "<div class='draft'>Ollama wrote:\n" + esc(message.rewrite) + "</div>" : "";
+        return "<div class='msg " + message.role + "'><div><div class='bubble" + (message.pending ? " pending" : "") + "'>" + esc(message.text) + "</div>" + meta + draft + "</div></div>";
       }).join("");
       log.scrollTop = log.scrollHeight;
     }

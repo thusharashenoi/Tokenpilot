@@ -147,6 +147,7 @@ test("a draft that drops a constraint is marked dropped", async () => {
   });
   assert.equal(trace.source, "dropped");
   assert.equal(trace.text, condenseUserPrompt(task));
+  assert.equal(trace.draft, "Update the checkout flow.");
 });
 
 test("a short prompt does not call the model", async () => {

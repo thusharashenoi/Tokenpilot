@@ -1,3 +1,5 @@
+import http from "node:http";
+import https from "node:https";
 import { compactProse } from "./nlp";
 import { countTokens } from "./tokens";
 
@@ -325,50 +327,93 @@ function completionText(payload: unknown): string {
     .join("");
 }
 
-async function complete(options: RewriteOptions, prose: string): Promise<string> {
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const timeout = AbortSignal.timeout(options.timeoutMs ?? 2000);
-  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
-  const response = await fetchImpl(completionsUrl(options.url || ""), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      model: options.model || DEFAULT_REWRITE_MODEL,
-      temperature: 0,
-      stream: false,
-      max_tokens: 384,
-      messages: [
-        { role: "system", content: REWRITE_SYSTEM },
-        { role: "user", content: prose },
-      ],
-    }),
-    signal,
+function postJson(url: string, body: string, timeoutMs: number): Promise<{ status: number; text: string }> {
+  const target = new URL(url);
+  const lib = target.protocol === "https:" ? https : http;
+  const hostname = target.hostname === "localhost" ? "127.0.0.1" : target.hostname;
+  return new Promise((resolve, reject) => {
+    const req = lib.request(
+      {
+        protocol: target.protocol,
+        hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
+        res.on("end", () => {
+          resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") });
+        });
+      },
+    );
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("Ollama timed out.")));
+    req.on("error", reject);
+    req.end(body);
   });
-  if (!response.ok) {
-    throw new Error(`Rewrite model returned ${response.status}.`);
+}
+
+async function complete(options: RewriteOptions, prose: string): Promise<string> {
+  const payload = JSON.stringify({
+    model: options.model || DEFAULT_REWRITE_MODEL,
+    temperature: 0,
+    stream: false,
+    max_tokens: 384,
+    messages: [
+      { role: "system", content: REWRITE_SYSTEM },
+      { role: "user", content: prose },
+    ],
+  });
+  const timeoutMs = options.timeoutMs ?? 10000;
+  if (options.fetchImpl) {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    const response = await options.fetchImpl(completionsUrl(options.url || ""), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: payload,
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Rewrite model returned ${response.status}.`);
+    }
+    return completionText(await response.json());
   }
-  return completionText(await response.json());
+  const posted = await postJson(completionsUrl(options.url || ""), payload, timeoutMs);
+  if (posted.status < 200 || posted.status >= 300) {
+    throw new Error(`Rewrite model returned ${posted.status}.`);
+  }
+  return completionText(JSON.parse(posted.text) as unknown);
 }
 
 export type RewriteTrace = {
   text: string;
   source: "skipped" | "failed" | "dropped" | "kept";
+  reason: string;
+  draft: string;
 };
 
 export async function traceUserPrompt(text: string, options: RewriteOptions = {}): Promise<RewriteTrace> {
   const fallback = condenseUserPrompt(text);
   if (!options.url || countTokens(proseOf(text)) <= 40) {
-    return { text: fallback, source: "skipped" };
+    return { text: fallback, source: "skipped", reason: "", draft: "" };
   }
   try {
     const raw = await complete(options, proseOf(compactProse(text)));
-    if (!raw.trim()) {
-      return { text: fallback, source: "dropped" };
+    const draft = raw.trim();
+    if (!draft) {
+      return { text: fallback, source: "dropped", reason: "", draft: "" };
     }
-    const settled = settleRewrite(text, raw);
-    return { text: settled, source: settled === fallback ? "dropped" : "kept" };
-  } catch {
-    return { text: fallback, source: "failed" };
+    const settled = settleRewrite(text, draft);
+    return { text: settled, source: settled === fallback ? "dropped" : "kept", reason: "", draft };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "The rewrite request failed.";
+    return { text: fallback, source: "failed", reason, draft: "" };
   }
 }
 
