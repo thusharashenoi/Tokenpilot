@@ -82,7 +82,7 @@
         "tokenpilot.proxyEnabled": {
           "type": "boolean",
           "default": true,
-          "description": "Start the local proxy that strips each request before forwarding it to Bifrost."
+          "description": "Run TokenPilot in this editor. Turning it on here does not turn it on in other open editors."
         },
         "tokenpilot.proxyPort": {
           "type": "number",

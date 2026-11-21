@@ -4,7 +4,8 @@ import http from "http";
 import os from "os";
 import path from "path";
 import test from "node:test";
-import { decideIdeHook, writeEndpoint } from "../src/core/ideClient";
+import { clearEndpoint, cursorHookSync, decideIdeHook, detectIdeHost, writeEndpoint } from "../src/core/ideClient";
+import { removeCursorHook } from "../src/installHooks";
 import { startProxy } from "../src/proxyServer";
 
 test("an IDE prompt is answered by the extension and is not forwarded upstream", async () => {
@@ -51,6 +52,75 @@ test("an IDE prompt is answered by the extension and is not forwarded upstream",
     fs.rmSync(file, { force: true });
     await proxy.close();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
+
+test("Cursor and VS Code are told apart, and only Cursor may claim the hook", () => {
+  assert.equal(detectIdeHost("Cursor", "cursor"), "cursor");
+  assert.equal(detectIdeHost("Visual Studio Code", "vscode"), "vscode");
+  assert.equal(detectIdeHost("Visual Studio Code - Insiders", "vscode-insiders"), "vscode");
+  assert.equal(detectIdeHost("Windsurf", "windsurf"), "other");
+
+  assert.equal(cursorHookSync("cursor", true, false), "install");
+  assert.equal(cursorHookSync("cursor", false, false), "remove");
+  assert.equal(cursorHookSync("cursor", false, true), "keep");
+  assert.equal(cursorHookSync("vscode", true, false), "remove");
+  assert.equal(cursorHookSync("vscode", true, true), "keep");
+});
+
+test("a VS Code endpoint does not capture a Cursor prompt", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenpilot-ide-"));
+  const vscodeFile = path.join(dir, "endpoint-vscode.json");
+  const cursorFile = path.join(dir, "endpoint-cursor.json");
+  writeEndpoint(vscodeFile, { port: 9, token: "secret" });
+  try {
+    const decision = await decideIdeHook({
+      endpointFile: cursorFile,
+      prompt: "Rename the header.",
+      conversationId: "chat-11",
+    });
+    assert.deepEqual(decision, { continue: true });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("clearing an endpoint leaves another IDE's record in place", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenpilot-endpoint-"));
+  const file = path.join(dir, "endpoint-cursor.json");
+  writeEndpoint(file, { port: 8787, token: "cursor-token" });
+  try {
+    assert.equal(clearEndpoint(file, "vscode-token"), false);
+    assert.equal(fs.existsSync(file), true);
+    assert.equal(clearEndpoint(file, "cursor-token"), true);
+    assert.equal(fs.existsSync(file), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("removing the Cursor hook keeps unrelated hooks", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tokenpilot-hooks-"));
+  const hooksPath = path.join(dir, "hooks.json");
+  fs.writeFileSync(
+    hooksPath,
+    JSON.stringify({
+      version: 1,
+      hooks: {
+        beforeSubmitPrompt: [{ command: "echo keep" }, { command: '"node" "/ext/dist/turn-hook.js"', timeout: 90 }],
+        stop: [{ command: "node /ext/dist/turn-hook.js" }],
+      },
+    }),
+  );
+  try {
+    removeCursorHook(hooksPath);
+    const saved = JSON.parse(fs.readFileSync(hooksPath, "utf8")) as {
+      hooks: { beforeSubmitPrompt?: Array<{ command: string }>; stop?: unknown };
+    };
+    assert.deepEqual(saved.hooks.beforeSubmitPrompt, [{ command: "echo keep" }]);
+    assert.equal(saved.hooks.stop, undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

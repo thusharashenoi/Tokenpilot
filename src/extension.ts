@@ -4,11 +4,20 @@ import os from "os";
 import path from "path";
 import * as vscode from "vscode";
 import { formatTokenNotice, type TurnNotice } from "./core/cursorTurn";
-import { clearEndpoint, defaultEndpointFile, writeEndpoint } from "./core/ideClient";
+import {
+  clearEndpoint,
+  cursorEndpointFile,
+  cursorHookSync,
+  detectIdeHost,
+  endpointFileExists,
+  ideHostLabel,
+  removeLegacyEndpoint,
+  writeEndpoint,
+} from "./core/ideClient";
 import type { ProxySpend } from "./core/proxy";
 import { listGatewayModels, pickCatalogModel } from "./core/modelCatalog";
 import { DEFAULT_REWRITE_MODEL, rewriteUserPrompt } from "./core/userPrompt";
-import { installCursorHook } from "./installHooks";
+import { installCursorHook, removeCursorHook } from "./installHooks";
 import { startProxy, type RunningProxy } from "./proxyServer";
 import { BenchView, TokenPilotSession } from "./session";
 
@@ -24,14 +33,31 @@ export function activate(context: vscode.ExtensionContext): void {
   tokenStatus.show();
 
   const ideToken = crypto.randomBytes(16).toString("hex");
-  const endpointFile = defaultEndpointFile();
+  const host = detectIdeHost(vscode.env.appName, vscode.env.uriScheme);
+  const endpointFile = cursorEndpointFile();
   let seen = readNotice(latest)?.id ?? "";
   let running: RunningProxy | undefined;
   let proxyUrl = "";
   let generation = 0;
 
-  const forgetEndpoint = (): void => {
-    clearEndpoint(endpointFile, ideToken);
+  const syncCursorHook = (activePort: number | null): void => {
+    const enabledHere = host === "cursor" && activePort !== null;
+    if (enabledHere) {
+      writeEndpoint(endpointFile, { port: activePort, token: ideToken });
+    } else if (host === "cursor") {
+      clearEndpoint(endpointFile, ideToken);
+    }
+    const action = cursorHookSync(host, enabledHere, endpointFileExists(endpointFile));
+    try {
+      if (action === "install") {
+        installCursorHook(context.extensionPath);
+      } else if (action === "remove") {
+        removeCursorHook();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "TokenPilot could not update its Cursor hook.";
+      output.appendLine(message);
+    }
   };
 
   const publish = (notice: TurnNotice): void => {
@@ -67,11 +93,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     running = undefined;
     proxyUrl = "";
-    forgetEndpoint();
+    if (host === "cursor") {
+      clearEndpoint(endpointFile, ideToken);
+    }
     const config = vscode.workspace.getConfiguration("tokenpilot");
     if (!config.get<boolean>("proxyEnabled", true)) {
+      syncCursorHook(null);
       tokenStatus.text = "$(debug-disconnect) TokenPilot proxy off";
-      tokenStatus.tooltip = "Enable tokenpilot.proxyEnabled so IDE prompts are sent by the extension.";
+      tokenStatus.tooltip = `TokenPilot is off in ${ideHostLabel(host)}. Other open editors stay unchanged.`;
       return;
     }
     const port = config.get<number>("proxyPort", 8787);
@@ -79,45 +108,58 @@ export function activate(context: vscode.ExtensionContext): void {
     const key = config.get<string>("bifrostKey")?.trim() ?? "";
     const rewriteUrl = config.get<string>("localUrl") || "http://127.0.0.1:11434";
     const rewriteModel = config.get<string>("rewriteModel") || DEFAULT_REWRITE_MODEL;
+    const options = {
+      upstream,
+      key,
+      rewriteUser: (text: string) => rewriteUserPrompt(text, { url: rewriteUrl, model: rewriteModel }),
+      pickModel: async (text: string) => {
+        const available = await listGatewayModels(upstream);
+        if (!available) {
+          return null;
+        }
+        const picked = pickCatalogModel(text, available);
+        return picked ? { model: picked.model, fallbacks: picked.fallbacks } : null;
+      },
+      onSpend: (spend: ProxySpend) => publish(noticeFrom(spend)),
+      ideToken,
+      onIdeTurn: (input: { prompt: string }, signal?: AbortSignal) => session.handleIdePrompt(input.prompt, signal),
+    };
+    const showRunning = (startedPort: number, requestedPort: number): void => {
+      proxyUrl = `http://127.0.0.1:${startedPort}/v1`;
+      syncCursorHook(host === "cursor" ? startedPort : null);
+      tokenStatus.text = `$(plug) TokenPilot :${startedPort}`;
+      const moved = startedPort === requestedPort ? "" : ` Port ${requestedPort} was already taken, so this window is using ${startedPort}.`;
+      if (host === "cursor") {
+        tokenStatus.tooltip = `Cursor chat in this window is handled on port ${startedPort}.${moved}`;
+        output.appendLine(`Extension listening on ${proxyUrl}. Only Cursor chat is hooked, and only while TokenPilot is enabled here.${moved}`);
+      } else {
+        tokenStatus.tooltip = `TokenPilot is on in this ${ideHostLabel(host)} window. Cursor chat is not hooked.${moved}`;
+        output.appendLine(
+          `Extension listening on ${proxyUrl}. This ${ideHostLabel(host)} window is using TokenPilot. Other editors are left alone.${moved}`,
+        );
+      }
+    };
     try {
-      const started = await startProxy({
-        port,
-        upstream,
-        key,
-        rewriteUser: (text) => rewriteUserPrompt(text, { url: rewriteUrl, model: rewriteModel }),
-        pickModel: async (text) => {
-          const available = await listGatewayModels(upstream);
-          if (!available) {
-            return null;
-          }
-          const picked = pickCatalogModel(text, available);
-          return picked ? { model: picked.model, fallbacks: picked.fallbacks } : null;
-        },
-        onSpend: (spend) => publish(noticeFrom(spend)),
-        ideToken,
-        onIdeTurn: (input, signal) => session.handleIdePrompt(input.prompt, signal),
-      });
+      let started: RunningProxy;
+      try {
+        started = await startProxy({ ...options, port });
+      } catch (error) {
+        if (!isAddrInUse(error) || ticket !== generation) {
+          throw error;
+        }
+        started = await startProxy({ ...options, port: 0 });
+      }
       if (ticket !== generation) {
         await started.close();
         return;
       }
       running = started;
-      proxyUrl = `http://127.0.0.1:${running.port}/v1`;
-      writeEndpoint(endpointFile, { port: running.port, token: ideToken });
-      tokenStatus.text = `$(plug) TokenPilot :${running.port}`;
-      tokenStatus.tooltip = `IDE prompts are sent by this extension on port ${running.port}.`;
-      output.appendLine(`Extension listening on ${proxyUrl}. IDE prompts are sent here, then forwarded to ${upstream}.`);
+      showRunning(running.port, port);
     } catch (error) {
       if (ticket !== generation) {
         return;
       }
-      if (isAddrInUse(error) && (await portAccepts(port))) {
-        proxyUrl = `http://127.0.0.1:${port}/v1`;
-        tokenStatus.text = `$(plug) TokenPilot :${port}`;
-        tokenStatus.tooltip = `Cursor OpenAI base URL: ${proxyUrl}`;
-        output.appendLine(`Proxy already listening on ${proxyUrl}.`);
-        return;
-      }
+      syncCursorHook(null);
       const message = error instanceof Error ? error.message : "TokenPilot could not start its proxy.";
       tokenStatus.text = "$(warning) TokenPilot proxy";
       tokenStatus.tooltip = message;
@@ -153,16 +195,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     {
       dispose: () => {
-        forgetEndpoint();
+        syncCursorHook(null);
         void running?.close();
       },
     },
   );
-  try {
-    installCursorHook(context.extensionPath);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "TokenPilot could not register its chat hook.";
-    output.appendLine(message);
+  removeLegacyEndpoint();
+  if (host !== "cursor") {
+    syncCursorHook(null);
   }
 
   fs.mkdirSync(path.dirname(latest), { recursive: true });
@@ -173,15 +213,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
 function isAddrInUse(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "EADDRINUSE");
-}
-
-async function portAccepts(port: number): Promise<boolean> {
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/v1/models`, { signal: AbortSignal.timeout(800) });
-    return response.status > 0;
-  } catch {
-    return false;
-  }
 }
 
 function noticeFrom(spend: ProxySpend): TurnNotice {

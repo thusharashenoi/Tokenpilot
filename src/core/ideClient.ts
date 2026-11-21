@@ -6,8 +6,66 @@ export type EndpointRecord = { port: number; token: string };
 
 export type IdeHookResponse = { continue: true } | { continue: false; user_message: string };
 
+export type IdeHost = "cursor" | "vscode" | "other";
+
+export type CursorHookSync = "install" | "remove" | "keep";
+
+export function detectIdeHost(appName: string, uriScheme: string): IdeHost {
+  const scheme = uriScheme.trim().toLowerCase();
+  const name = appName.trim().toLowerCase();
+  if (scheme === "cursor" || name === "cursor" || name.startsWith("cursor ")) {
+    return "cursor";
+  }
+  if (scheme === "vscode" || scheme === "vscode-insiders" || name.includes("visual studio code")) {
+    return "vscode";
+  }
+  return "other";
+}
+
+export function ideHostLabel(host: IdeHost): string {
+  if (host === "cursor") {
+    return "Cursor";
+  }
+  if (host === "vscode") {
+    return "VS Code";
+  }
+  return "this editor";
+}
+
+export function cursorEndpointFile(): string {
+  return path.join(os.homedir(), ".cursor", "tokenpilot", "endpoint-cursor.json");
+}
+
 export function defaultEndpointFile(): string {
+  return cursorEndpointFile();
+}
+
+export function legacyEndpointFile(): string {
   return path.join(os.homedir(), ".cursor", "tokenpilot", "endpoint.json");
+}
+
+export function endpointFileExists(file: string): boolean {
+  return fs.existsSync(file);
+}
+
+export function removeLegacyEndpoint(): void {
+  try {
+    fs.unlinkSync(legacyEndpointFile());
+  } catch {
+    return;
+  }
+}
+
+// Cursor publishes an endpoint only while it is enabled. Another IDE must not
+// install the hook, and must not remove a hook Cursor is still using.
+export function cursorHookSync(host: IdeHost, enabledHere: boolean, endpointPresent: boolean): CursorHookSync {
+  if (host === "cursor" && enabledHere) {
+    return "install";
+  }
+  if (!endpointPresent) {
+    return "remove";
+  }
+  return "keep";
 }
 
 export function writeEndpoint(file: string, record: EndpointRecord): void {
@@ -17,14 +75,16 @@ export function writeEndpoint(file: string, record: EndpointRecord): void {
   fs.renameSync(tmp, file);
 }
 
-export function clearEndpoint(file: string, token: string): void {
+export function clearEndpoint(file: string, token: string): boolean {
   try {
     const current = JSON.parse(fs.readFileSync(file, "utf8")) as { token?: unknown };
-    if (current.token === token) {
-      fs.unlinkSync(file);
+    if (current.token !== token) {
+      return false;
     }
+    fs.unlinkSync(file);
+    return true;
   } catch {
-    return;
+    return false;
   }
 }
 

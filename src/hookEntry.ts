@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { applyCursorHook, measureReducedTurn, type PendingTurns } from "./core/cursorTurn";
-import { decideIdeHook, defaultEndpointFile } from "./core/ideClient";
+import { cursorEndpointFile, decideIdeHook } from "./core/ideClient";
 
 function stateDir(): string {
   return process.env.TOKENPILOT_STATE_DIR || path.join(os.homedir(), ".cursor", "tokenpilot");
@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   const pending = readJson<PendingTurns>(pendingPath, {});
   if (input.hook_event_name === "beforeSubmitPrompt") {
     const decision = await decideIdeHook({
-      endpointFile: defaultEndpointFile(),
+      endpointFile: cursorEndpointFile(),
       prompt: String(input.prompt ?? ""),
       conversationId: String(input.conversation_id ?? "default"),
     });

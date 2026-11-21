@@ -8,19 +8,50 @@ type HooksFile = { version: number; hooks: Record<string, HookCommand[]> };
 
 const EVENTS = ["beforeSubmitPrompt", "stop"];
 
-export function installCursorHook(extensionPath: string): string {
+export function defaultHooksPath(): string {
+  return path.join(os.homedir(), ".cursor", "hooks.json");
+}
+
+export function installCursorHook(extensionPath: string, hooksPath = defaultHooksPath()): string {
   const script = path.join(extensionPath, "dist", "turn-hook.js");
   const node = findNode();
   const command = `"${node}" "${script}"`;
-  const hooksPath = path.join(os.homedir(), ".cursor", "hooks.json");
   fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
   const current = readHooks(hooksPath);
   for (const event of EVENTS) {
-    const kept = (current.hooks[event] ?? []).filter((hook) => !hook.command.includes("turn-hook.js"));
+    const kept = (current.hooks[event] ?? []).filter((hook) => !isTokenPilotHook(hook.command));
     current.hooks[event] = [...kept, { command, timeout: 90 }];
   }
   fs.writeFileSync(hooksPath, JSON.stringify(current, null, 2));
   return command;
+}
+
+export function removeCursorHook(hooksPath = defaultHooksPath()): void {
+  if (!fs.existsSync(hooksPath)) {
+    return;
+  }
+  const current = readHooks(hooksPath);
+  let changed = false;
+  for (const event of Object.keys(current.hooks)) {
+    const hooks = current.hooks[event] ?? [];
+    const kept = hooks.filter((hook) => !isTokenPilotHook(hook.command));
+    if (kept.length === hooks.length) {
+      continue;
+    }
+    changed = true;
+    if (kept.length === 0) {
+      delete current.hooks[event];
+    } else {
+      current.hooks[event] = kept;
+    }
+  }
+  if (changed) {
+    fs.writeFileSync(hooksPath, JSON.stringify(current, null, 2));
+  }
+}
+
+function isTokenPilotHook(command: string): boolean {
+  return command.includes("turn-hook.js");
 }
 
 function readHooks(hooksPath: string): HooksFile {
