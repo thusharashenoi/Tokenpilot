@@ -66,10 +66,9 @@ function localDecision(input: RouteInput, reason: string, notifyUser: string | n
 }
 
 /**
- * Stand-in until Jev replaces this function.
- * Pass a different RoutingPolicy into routeTurn. Confidential turns are forced
- * back to the local model even if that policy returns a cloud model.
- * The user text is not an input, so the prompt cannot choose the provider.
+ * Fallback when the Bifrost model list cannot be read.
+ * The catalog overlay replaces this choice when a listed model matches the task.
+ * Confidential turns stay on the local model. The prompt text cannot name the provider.
  */
 export function defaultPolicy(input: RouteInput): RouteDecision {
   if (input.confidential) {

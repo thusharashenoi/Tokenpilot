@@ -1,7 +1,6 @@
 import crypto from "crypto";
 import * as vscode from "vscode";
 import {
-  GraphIndex,
   MAX_OUTPUT_TOKENS,
   estimateCost,
   formatTokenPopup,
@@ -9,24 +8,25 @@ import {
   isAgentId,
   optimizeInput,
   routeTurn,
+  type RouteDecision,
   sampleTask,
   sendViaBifrost,
   toOpenAITools,
   type AgentId,
   type ModelIds,
 } from "./core";
+import { applyCatalogChoice, listGatewayModels } from "./core/modelCatalog";
+import { DEFAULT_REWRITE_MODEL, rewriteUserPrompt } from "./core/userPrompt";
 import { benchHtml } from "./panel/html";
 import type { HostToWebview, WebviewToHost } from "./protocol";
 
 export class TokenPilotSession {
   readonly statusBar: vscode.StatusBarItem;
-  private readonly index = new GraphIndex();
   private readonly listeners = new Set<(message: HostToWebview) => void>();
   private panel: vscode.WebviewPanel | undefined;
   private last: {
     report: ReturnType<typeof optimizeInput>;
     route: ReturnType<typeof routeTurn>;
-    hit: ReturnType<GraphIndex["queryText"]>;
     limit: number;
   } | null = null;
 
@@ -41,33 +41,9 @@ export class TokenPilotSession {
     this.listeners.add(listener);
     listener(this.stateMessage());
     if (this.last) {
-      listener({ type: "report", report: this.last.report, route: this.last.route, hit: this.last.hit });
+      listener({ type: "report", report: this.last.report, route: this.last.route });
     }
     return () => this.listeners.delete(listener);
-  }
-
-  reindex(): void {
-    const folder = vscode.workspace.workspaceFolders?.[0];
-    if (!folder) {
-      this.refreshStatus();
-      this.post({ type: "error", message: "Open a folder to index a codebase." });
-      return;
-    }
-    this.index.load(folder.uri.fsPath);
-    this.refreshStatus();
-    this.post(this.stateMessage());
-  }
-
-  onSave(document: vscode.TextDocument): void {
-    if (document.uri.scheme !== "file") {
-      return;
-    }
-    if (!/\.(tsx?|jsx?|mjs|cjs)$/.test(document.fileName) || document.fileName.endsWith(".d.ts")) {
-      return;
-    }
-    this.index.setFile(document.fileName, document.getText());
-    this.refreshStatus();
-    this.post(this.stateMessage());
   }
 
   openPanel(): void {
@@ -96,26 +72,20 @@ export class TokenPilotSession {
 
   async handle(message: WebviewToHost): Promise<void> {
     try {
-      if (message.type === "reindex") {
-        this.reindex();
-      } else if (message.type === "sample") {
+      if (message.type === "sample") {
         this.post({ type: "prefill", prompt: sampleTask() });
       } else if (message.type === "resetSpend") {
         await this.context.workspaceState.update(this.spendKey(), 0);
         this.post(this.stateMessage());
-      } else if (message.type === "lookup") {
-        this.post({ type: "lookup", hit: this.index.querySymbol(message.name) });
       } else if (message.type === "optimize") {
-        this.build(message.prompt, message.confidential, message.budgetUsd, message.primaryUp, message.agent);
-      } else if (message.type === "send") {
-        await this.send();
+        await this.build(message.prompt, message.confidential, message.budgetUsd, message.primaryUp, message.agent);
       }
     } catch (error) {
       this.post({ type: "error", message: error instanceof Error ? error.message : "TokenPilot failed. The turn is still here." });
     }
   }
 
-  private build(prompt: string, confidential: boolean, budgetUsd: number, primaryUp: boolean, agent?: AgentId): void {
+  private async build(prompt: string, confidential: boolean, budgetUsd: number, primaryUp: boolean, agent?: AgentId): Promise<void> {
     const task = prompt.trim();
     if (!task) {
       this.post({ type: "error", message: "Write a task first." });
@@ -124,68 +94,119 @@ export class TokenPilotSession {
     const selected = agent && isAgentId(agent) ? agent : "cursor";
     const harness = harnessFor(selected);
     const limit = Number.isFinite(budgetUsd) && budgetUsd >= 0 ? budgetUsd : this.budgetLimit();
-    const hit = this.index.queryText(task);
+    const rewritten = await this.rewriteTask(task);
     const report = optimizeInput({
       systemPrompt: harness.systemPrompt,
       userText: task,
+      rewrittenUserText: rewritten,
       tools: harness.tools,
-      graphPack: hit.pack,
-      fullFileTokens: hit.fullFileTokens,
       agentLabel: harness.label,
     });
-    const route = routeTurn({
-      confidential,
-      taskKind: report.task,
-      promptTokens: report.tokens.optimized,
-      budgetRemainingUsd: limit - this.spent(),
-      providerUp: primaryUp,
-      models: this.models(),
-    });
-    this.last = { report, route, hit, limit };
-    this.post({ type: "report", report, route, hit });
+    const route = await this.withCatalog(
+      routeTurn({
+        confidential,
+        taskKind: report.task,
+        promptTokens: report.tokens.optimized,
+        budgetRemainingUsd: limit - this.spent(),
+        providerUp: primaryUp,
+        models: this.models(),
+      }),
+      rewritten,
+    );
+    this.last = { report, route, limit };
+    this.post({ type: "report", report, route });
     this.showTokenPopup(report);
   }
 
-  private async send(): Promise<void> {
-    const model = this.last?.route.model;
-    if (!this.last || !model || this.last.route.blocked || this.last.route.via === "none") {
-      this.post({ type: "error", message: this.last?.route.notifyUser ?? "Build a turn before sending it." });
-      return;
+  async handleIdePrompt(prompt: string, signal?: AbortSignal): Promise<{ content: string; model: string; notice: string | null }> {
+    const task = prompt.trim();
+    if (!task) {
+      throw new Error("Write a task first.");
+    }
+    if (signal?.aborted) {
+      throw new Error("The IDE prompt was cancelled.");
     }
     const config = vscode.workspace.getConfiguration("tokenpilot");
+    const harness = harnessFor("cursor");
+    const limit = this.budgetLimit();
+    const rewritten = await this.rewriteTask(task, signal);
+    if (signal?.aborted) {
+      throw new Error("The IDE prompt was cancelled.");
+    }
+    const report = optimizeInput({
+      systemPrompt: harness.systemPrompt,
+      userText: task,
+      rewrittenUserText: rewritten,
+      tools: harness.tools,
+      agentLabel: harness.label,
+    });
+    const route = await this.withCatalog(
+      routeTurn({
+        confidential: config.get<boolean>("confidential", false),
+        taskKind: report.task,
+        promptTokens: report.tokens.optimized,
+        budgetRemainingUsd: limit - this.spent(),
+        providerUp: true,
+        models: this.models(),
+      }),
+      rewritten,
+    );
+    this.last = { report, route, limit };
+    this.post({ type: "report", report, route });
+    const model = route.model;
+    if (!model || route.blocked || route.via === "none") {
+      const message = route.notifyUser ?? "TokenPilot did not send this turn.";
+      this.post({ type: "error", message });
+      return { content: message, model: "", notice: message };
+    }
     const models = this.models();
-    const decision = this.last.route;
     const result = await sendViaBifrost({
-      via: decision.via === "local" ? "local" : "bifrost",
+      via: route.via === "local" ? "local" : "bifrost",
       baseUrl: config.get<string>("bifrostUrl") || "http://localhost:8080",
       path: config.get<string>("bifrostPath") || "/v1/chat/completions",
       model,
-      fallbacks: decision.fallbacks,
-      messages: this.last.report.messages,
-      tools: toOpenAITools(this.last.report.tools),
+      fallbacks: route.fallbacks,
+      messages: report.messages,
+      tools: toOpenAITools(report.tools),
       localBaseUrl: config.get<string>("localUrl") || "http://localhost:11434",
       localModel: models.local,
       maxTokens: MAX_OUTPUT_TOKENS,
+      signal,
     });
     const tier = result.modelUsed === models.local ? "local" : result.modelUsed === models.small ? "small" : "strong";
     const cost = result.usage
       ? estimateCost(tier, result.usage.promptTokens, result.usage.completionTokens)
-      : decision.estimatedCostUsd;
+      : route.estimatedCostUsd;
     const spent = this.spent() + cost;
     await this.context.workspaceState.update(this.spendKey(), spent);
+    const notice = result.notifyUser ?? route.notifyUser;
     this.post({
       type: "sent",
       content: result.content,
       model: result.modelUsed,
-      notice: result.notifyUser ?? decision.notifyUser,
+      notice,
       spentUsd: spent,
-      remainingUsd: Math.max(0, this.last.limit - spent),
+      remainingUsd: Math.max(0, limit - spent),
     });
     this.post(this.stateMessage());
-    this.showTokenPopup(
-      this.last.report,
-      result.usage ? { promptTokens: result.usage.promptTokens, model: result.modelUsed } : undefined,
-    );
+    const popup = formatTokenPopup(report, result.usage ? { promptTokens: result.usage.promptTokens, model: result.modelUsed } : undefined);
+    void vscode.window.showInformationMessage(popup.message);
+    return { content: result.content, model: result.modelUsed, notice };
+  }
+
+  private async withCatalog(decision: RouteDecision, text: string): Promise<RouteDecision> {
+    const origin = vscode.workspace.getConfiguration("tokenpilot").get<string>("bifrostUrl") || "http://localhost:8080";
+    const available = await listGatewayModels(origin);
+    return applyCatalogChoice(decision, text, available);
+  }
+
+  private rewriteTask(text: string, signal?: AbortSignal): Promise<string> {
+    const config = vscode.workspace.getConfiguration("tokenpilot");
+    return rewriteUserPrompt(text, {
+      url: config.get<string>("localUrl") || "http://127.0.0.1:11434",
+      model: config.get<string>("rewriteModel") || DEFAULT_REWRITE_MODEL,
+      signal,
+    });
   }
 
   private showTokenPopup(
@@ -199,7 +220,6 @@ export class TokenPilotSession {
   private stateMessage(): HostToWebview {
     return {
       type: "state",
-      stats: this.index.stats(),
       userId: this.userId(),
       budgetUsd: this.budgetLimit(),
       spentUsd: this.spent(),
@@ -240,16 +260,8 @@ export class TokenPilotSession {
   }
 
   private refreshStatus(): void {
-    if (!vscode.workspace.workspaceFolders?.[0]) {
-      this.statusBar.text = "$(warning) TokenPilot";
-      this.statusBar.tooltip = "Open a folder to index a codebase.";
-      return;
-    }
-    const stats = this.index.stats();
-    this.statusBar.text = stats.ok
-      ? `$(type-hierarchy) TokenPilot ${stats.symbols}`
-      : `$(warning) TokenPilot ${stats.symbols}`;
-    this.statusBar.tooltip = stats.ok ? "Code graph is valid" : stats.issues.join("\n");
+    this.statusBar.text = "$(plug) TokenPilot";
+    this.statusBar.tooltip = "TokenPilot";
   }
 
   private post(message: HostToWebview): void {

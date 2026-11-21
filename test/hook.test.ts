@@ -4,12 +4,10 @@ import { applyCursorHook, formatTokenNotice, measureReducedTurn } from "../src/c
 
 test("a finished chat turn reports the reduced input", () => {
   const prompt = "Please can you kindly add a submit button to the form. Thanks so much!";
-  const measured = measureReducedTurn(prompt, "GRAPH\ncharge fn sample-repo/src/charge.ts:4-20\n", 900);
+  const measured = measureReducedTurn(prompt);
   assert.ok(measured.promptTokens < measured.baselineTokens);
   assert.ok(measured.userAfter < measured.userBefore);
   assert.ok(measured.harnessAfter < measured.harnessBefore);
-  assert.equal(measured.fullFiles, 900);
-  assert.ok(measured.graphPack > 0);
 
   const submitted = applyCursorHook(
     { hook_event_name: "beforeSubmitPrompt", conversation_id: "chat-1", prompt },
@@ -31,7 +29,6 @@ test("a finished chat turn reports the reduced input", () => {
   assert.match(text, /Reduced input: [\d,]+ tokens \(was [\d,]+\)/);
   assert.match(text, /Prompt \d+→\d+/);
   assert.match(text, /System and tools \d+→\d+/);
-  assert.match(text, /Graph \d+ instead of 900/);
 });
 
 test("a prompt is allowed through and a failed turn stays quiet", () => {

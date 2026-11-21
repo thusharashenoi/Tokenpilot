@@ -97,7 +97,8 @@ test("a chat payload keeps the minimum harness and the edit tools", () => {
   assert.ok(user.includes("update the checkout flow"));
   assert.ok(user.includes("don't change charge()"));
   assert.equal(user.includes("Thanks"), false);
-  assert.match(user, /\[12\]\{sku,qty\}:/);
+  assert.ok(user.includes("SKU-0"));
+  assert.ok(user.includes('"sku"'));
   assert.deepEqual(report.keptTools, ["Read", "Grep", "StrReplace"]);
   assert.ok(report.droppedTools.includes("Shell"));
   assert.ok(report.droppedTools.includes("WebSearch"));
@@ -105,6 +106,28 @@ test("a chat payload keeps the minimum harness and the edit tools", () => {
   const sent = report.payload.tools as Array<{ function: { name: string; description: string; parameters: { properties: { path?: { description?: string } } } } }>;
   assert.equal(sent.find((tool) => tool.function.name === "Read")?.function.description.includes("whole repository"), false);
   assert.equal(sent.find((tool) => tool.function.name === "Read")?.function.parameters.properties.path?.description, undefined);
+});
+
+test("an image part stays beside the groomed text", () => {
+  const report = reduceProviderPayload({
+    model: "openai/gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Please describe this.\nThanks!" },
+          { type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
+        ],
+      },
+    ],
+  });
+  const messages = report.payload.messages as Array<{ role: string; content: unknown }>;
+  const user = messages.find((message) => message.role === "user");
+  const content = user?.content as Array<{ type: string; text?: string; image_url?: { url: string } }>;
+  assert.equal(content[0].text?.includes("Thanks"), false);
+  assert.match(content[0].text ?? "", /describe this/);
+  assert.equal(content[1].type, "image_url");
+  assert.equal(content[1].image_url?.url, "data:image/png;base64,abc");
 });
 
 test("a responses payload is rewritten in place", () => {

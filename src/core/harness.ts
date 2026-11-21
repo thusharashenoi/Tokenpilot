@@ -1,4 +1,5 @@
-import { classifyTask, type TaskKind } from "./route";
+import { jevAttach } from "./jev";
+import type { TaskKind } from "./route";
 import { countTokens } from "./tokens";
 
 export type ToolTag = "read" | "edit" | "shell" | "git" | "search" | "graph" | "web" | "meta" | "extra";
@@ -207,42 +208,6 @@ function withTags(tool: ToolDef): ToolDef {
   };
 }
 
-function wantedTags(task: TaskKind, userText: string): Set<ToolTag> {
-  const tags = new Set<ToolTag>(["read", "graph"]);
-  if (task === "edit") {
-    tags.add("edit");
-    tags.add("search");
-  } else if (task === "lookup" || task === "reason") {
-    tags.add("search");
-  }
-  if (/\b(tests?|npm|pnpm|yarn|shell|terminal|lint|build)\b/i.test(userText)) {
-    tags.add("shell");
-  }
-  if (/\b(git|commit|branch|pull request|\bpr\b|merge|rebase)\b/i.test(userText)) {
-    tags.add("git");
-  }
-  if (/\b(web|docs|tavily|internet|online)\b/i.test(userText)) {
-    tags.add("web");
-  }
-  if (/\b(plan|todo|subagent|delegate|switch mode)\b/i.test(userText)) {
-    tags.add("meta");
-  }
-  return tags;
-}
-
-function mentionsTool(userText: string, name: string): boolean {
-  const raw = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (new RegExp(`\\b${raw}\\b`, "i").test(userText)) {
-    return true;
-  }
-  const spaced = name.toLowerCase().replace(/[_-]/g, " ");
-  if (spaced === name.toLowerCase()) {
-    return false;
-  }
-  const pattern = spaced.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\b${pattern}\\b`, "i").test(userText);
-}
-
 const DROP_HEADING =
   /^(examples?|few[- ]shot(?: examples)?|style guide|tone and style|communication(?: style)?|citing code|code citations|persona|identity|background|changelog|using your tools|how to use tools|tool use|tool usage|available tools|response style|personality|making code changes|formatting|markdown|citation|attached files|open files|codebase|file contents|relevant files)\b/i;
 
@@ -381,23 +346,15 @@ export function stripHarness(
   tools: ToolDef[],
   userText: string,
 ): { systemPrompt: string; tools: ToolDef[]; task: TaskKind; dropped: string[] } {
-  const task = classifyTask(userText);
   const tagged = tools.map(withTags);
-  const allow = wantedTags(task, userText);
-  const hasGitWrite = tagged.some((tool) => tool.tags.includes("git") && /commit|branch|merge|rebase/i.test(tool.name));
-  if (allow.has("git") && !hasGitWrite) {
-    allow.add("shell");
-  }
-  const kept = tagged
-    .filter((item) => item.tags.some((tag) => allow.has(tag)) || mentionsTool(userText, item.name))
-    .map((item) => ({
-      ...item,
-      description: shorten(item.description),
-      parameters: item.parameters ? slimSchema(item.parameters) : item.parameters,
-    }));
-  const system = distillHarness(systemPrompt);
-  const dropped = tagged.filter((item) => !kept.some((next) => next.name === item.name)).map((item) => item.name);
-  return { systemPrompt: system.trim(), tools: kept, task, dropped };
+  const jev = jevAttach(userText, tagged);
+  const kept = jev.tools.map((item) => ({
+    ...item,
+    description: shorten(item.description),
+    parameters: item.parameters ? slimSchema(item.parameters) : item.parameters,
+  }));
+  const system = `${distillHarness(systemPrompt)}\n\n${jev.note}`;
+  return { systemPrompt: system.trim(), tools: kept, task: jev.task, dropped: jev.omitted };
 }
 
 const APPROVAL_TOOLS = new Set(DEFAULT_TOOLS.filter((item) => item.requiresApproval).map((item) => item.name));
