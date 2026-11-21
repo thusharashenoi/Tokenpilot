@@ -4,6 +4,7 @@ import { compactProse } from "./nlp";
 import { countTokens } from "./tokens";
 
 export const DEFAULT_REWRITE_MODEL = "qwen2.5:1.5b";
+const REWRITE_TIMEOUT_MS = 10_000;
 
 const REWRITE_SYSTEM = [
   "Rewrite the user task into the shortest prompt that keeps every requirement.",
@@ -327,6 +328,39 @@ function completionText(payload: unknown): string {
     .join("");
 }
 
+export function draftFromEvents(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith("data:")) {
+    try {
+      return completionText(JSON.parse(trimmed) as unknown);
+    } catch {
+      return "";
+    }
+  }
+  let text = "";
+  for (const line of trimmed.split(/\r?\n/)) {
+    const row = line.trim();
+    if (!row.startsWith("data:")) {
+      continue;
+    }
+    const data = row.slice(5).trim();
+    if (!data || data === "[DONE]") {
+      continue;
+    }
+    try {
+      const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: unknown }; message?: { content?: unknown } }> };
+      const choice = payload.choices?.[0];
+      const piece = choice?.delta?.content ?? choice?.message?.content;
+      if (typeof piece === "string") {
+        text += piece;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return text;
+}
+
 function postJson(url: string, body: string, timeoutMs: number): Promise<{ status: number; text: string }> {
   const target = new URL(url);
   const lib = target.protocol === "https:" ? https : http;
@@ -346,9 +380,14 @@ function postJson(url: string, body: string, timeoutMs: number): Promise<{ statu
       },
       (res) => {
         const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
+        res.on("data", (chunk: Buffer | string) => {
+          chunks.push(Buffer.from(chunk));
+          req.setTimeout(timeoutMs);
+        });
         res.on("end", () => {
-          resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") });
+          const raw = Buffer.concat(chunks).toString("utf8");
+          const text = res.statusCode && res.statusCode >= 200 && res.statusCode < 300 ? draftFromEvents(raw) : raw;
+          resolve({ status: res.statusCode ?? 0, text });
         });
       },
     );
@@ -362,14 +401,14 @@ async function complete(options: RewriteOptions, prose: string): Promise<string>
   const payload = JSON.stringify({
     model: options.model || DEFAULT_REWRITE_MODEL,
     temperature: 0,
-    stream: false,
+    stream: options.fetchImpl ? false : true,
     max_tokens: 384,
     messages: [
       { role: "system", content: REWRITE_SYSTEM },
       { role: "user", content: prose },
     ],
   });
-  const timeoutMs = options.timeoutMs ?? 10000;
+  const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS;
   if (options.fetchImpl) {
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
@@ -388,7 +427,7 @@ async function complete(options: RewriteOptions, prose: string): Promise<string>
   if (posted.status < 200 || posted.status >= 300) {
     throw new Error(`Rewrite model returned ${posted.status}.`);
   }
-  return completionText(JSON.parse(posted.text) as unknown);
+  return posted.text;
 }
 
 export type RewriteTrace = {

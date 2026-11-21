@@ -185,7 +185,9 @@ function chatHtml(cspSource: string, nonce: string): string {
     .user .bubble { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-bottom-right-radius: 4px; max-width: 85%; }
     .assistant .bubble { background: transparent; padding-left: 0; }
     .meta { color: var(--vscode-descriptionForeground); font-size: 11px; margin-top: 4px; }
-    .draft { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 6px; white-space: pre-wrap; }
+    .draft { margin-top: 6px; }
+    .draft summary { color: var(--vscode-descriptionForeground); font-size: 11px; cursor: pointer; }
+    .draft p { color: var(--vscode-descriptionForeground); font-size: 12px; white-space: pre-wrap; margin: 6px 0 0; }
     .pending { color: var(--vscode-descriptionForeground); }
     form { margin: 0 auto; width: min(720px, calc(100% - 20px)); border: 1px solid var(--vscode-input-border, rgba(127,127,127,0.45)); border-radius: 12px; padding: 8px; margin-bottom: 12px; background: var(--vscode-input-background); }
     .route-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -244,7 +246,7 @@ function chatHtml(cspSource: string, nonce: string): string {
       }
       log.innerHTML = messages.map(function (message) {
         const meta = message.meta ? "<div class='meta'>" + esc(message.meta) + "</div>" : "";
-        const draft = message.rewrite ? "<div class='draft'>Ollama wrote:\n" + esc(message.rewrite) + "</div>" : "";
+        const draft = message.rewrite ? "<details class='draft'><summary>Ollama wrote</summary><p>" + esc(message.rewrite) + "</p></details>" : "";
         return "<div class='msg " + message.role + "'><div><div class='bubble" + (message.pending ? " pending" : "") + "'>" + esc(message.text) + "</div>" + meta + draft + "</div></div>";
       }).join("");
       log.scrollTop = log.scrollHeight;

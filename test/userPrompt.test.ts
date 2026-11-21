@@ -4,7 +4,7 @@ import test from "node:test";
 import { reduceProviderPayload } from "../src/core/reduce";
 import { countTokens } from "../src/core/tokens";
 import { prepareUpstreamBody } from "../src/core/proxy";
-import { condenseUserPrompt, rewriteUserPrompt, settleRewrite, traceUserPrompt } from "../src/core/userPrompt";
+import { condenseUserPrompt, draftFromEvents, rewriteUserPrompt, settleRewrite, traceUserPrompt } from "../src/core/userPrompt";
 
 const task = [
   "Hey! I was wondering if you could please help me out with this.",
@@ -137,6 +137,16 @@ test("a local model rewrites the user prompt and a failure falls back", async ()
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("a streamed rewrite is joined from the events", () => {
+  const body = [
+    'data: {"choices":[{"delta":{"content":"Update checkout"}}]}',
+    "",
+    'data: {"choices":[{"delta":{"content":" so guests can pay."}}]}',
+    "data: [DONE]",
+  ].join("\n");
+  assert.equal(draftFromEvents(body), "Update checkout so guests can pay.");
 });
 
 test("a draft that drops a constraint is marked dropped", async () => {
