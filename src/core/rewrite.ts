@@ -92,7 +92,11 @@ function keepSentence(sentence: string, goal: Set<string>): boolean {
   return shared >= 1 || NEGATION.test(sentence) || /\d/.test(sentence);
 }
 
-function compressProse(prose: string, goal: Set<string>, goalText: string): string {
+export function hasUnclosedFence(text: string): boolean {
+  return (text.match(/```/g)?.length ?? 0) % 2 === 1;
+}
+
+function compressProse(prose: string, goal: Set<string>): string {
   const sentences = sentencesOf(prose);
   if (sentences.length === 0) {
     return "";
@@ -109,37 +113,45 @@ function compressProse(prose: string, goal: Set<string>, goalText: string): stri
   if (chosen.length > 0) {
     return chosen.join(" ");
   }
-  const objective = goalText.replace(/\s+/g, " ").trim().slice(0, 160);
-  return objective ? `Objective: ${objective}` : "";
+  return "";
+}
+
+export function holdExistingSignatures(reply: string, note: string): string {
+  const declared = [...note.matchAll(/^- \S+:\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/gm)];
+  for (const match of declared) {
+    const name = match[1];
+    const params = match[2].replace(/\s+/g, "");
+    const found = reply.match(new RegExp(`function\\s+${name}\\s*\\(([^)]*)\\)`));
+    if (found && found[1].replace(/\s+/g, "") !== params) {
+      const signature = `${name}(${match[2].replace(/\s+/g, " ").trim()})`;
+      return `No edit is required. ${signature} already meets the goal.`;
+    }
+  }
+  return reply;
 }
 
 export function rewriteReply(content: string, goal: string, allowedUrls?: string[]): RewriteResult {
   const beforeTokens = countTokens(content);
-  if (!content.trim()) {
+  if (!content.trim() || hasUnclosedFence(content)) {
     return { text: content, beforeTokens, afterTokens: beforeTokens, droppedUrls: [], changed: false };
   }
   const allowed = allowedUrls ? new Set(allowedUrls) : null;
   const goalWords = contentWords(goal);
   const droppedUrls: string[] = [];
-  let proseLeft = false;
   const rebuilt = splitFences(content)
-    .map((part) => {
+    .flatMap((part) => {
       if (part.kind === "code") {
-        return part.text;
+        return [part.text.trim()];
       }
       const stripped = stripUrls(part.text, allowed);
       droppedUrls.push(...stripped.dropped);
-      const compressed = compressProse(stripped.text, goalWords, goal);
-      if (compressed) {
-        proseLeft = true;
-        return `${compressed}\n\n`;
-      }
-      return "";
+      const compressed = compressProse(stripped.text, goalWords);
+      return compressed ? [compressed] : [];
     })
-    .join("")
+    .join("\n\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-  const withStatus = proseLeft || !goal.trim() ? rebuilt : `Objective: ${goal.trim().slice(0, 160)}\n\n${rebuilt}`.trim();
+  const withStatus = rebuilt;
   const afterTokens = countTokens(withStatus);
   if (afterTokens > beforeTokens && droppedUrls.length === 0) {
     return { text: content, beforeTokens, afterTokens: beforeTokens, droppedUrls, changed: false };

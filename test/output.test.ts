@@ -1,13 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sendViaBifrost } from "../src/core/bifrost";
+import { answerReady } from "../src/core/finishReply";
 import { alignObjective, reasoningFor } from "../src/core/objective";
 import { optimizeInput } from "../src/core/optimize";
-import { rewriteReply } from "../src/core/rewrite";
+import { scopeNote } from "../src/core/graph";
+import { holdExistingSignatures, rewriteReply } from "../src/core/rewrite";
 import { fetchTavilyPack, needsExternalFact } from "../src/core/tavily";
 import type { ChatMessage } from "../src/core/types";
 
 const fence = "```ts\nexport function charge(card: Card) { return card; }\n```";
+
+test("a short finished answer is ready and a file-reading plan is not", () => {
+  assert.equal(answerReady("No edit is required. charge(card, amount, guest) already meets the goal.", []), true);
+  assert.equal(answerReady("May I ask permission to search the workspace for src/charge.ts?", []), true);
+  assert.equal(answerReady("Let's check src/charge.ts and other files as well.", []), false);
+  assert.equal(answerReady("", [{ id: "1", name: "Read", arguments: "{}" }]), false);
+});
 
 test("the objective contract is appended after input optimization", () => {
   const report = optimizeInput({
@@ -25,8 +34,13 @@ test("the objective contract is appended after input optimization", () => {
   assert.match(system, /Don't change charge\(\)/);
   assert.match(system, /In scope: src\/checkout.ts/);
   assert.match(system, /Answer first/);
+  assert.match(system, /no edit is required/);
+  const greeting = alignObjective([{ role: "user", content: "Hello" }], { task: "lookup", userText: "Hello" });
+  const greetingSystem = greeting.messages.find((message) => message.role === "system")?.content ?? "";
+  assert.match(greetingSystem, /one short greeting/);
+  assert.equal(greetingSystem.includes("say no edit is required"), false);
   assert.equal(aligned.reasoning, "low");
-  assert.equal(aligned.maxTokens, 500);
+  assert.equal(aligned.maxTokens, 800);
   assert.equal(aligned.messages.find((message) => message.role === "user")?.content, report.userText);
 });
 
@@ -45,6 +59,47 @@ test("the rewriter keeps an on-objective answer and its code", () => {
   assert.ok(result.text.includes(fence));
   assert.match(result.text, /without an account/);
   assert.match(result.text, /unchanged/);
+});
+
+test("an unclosed fence is stored unchanged and the objective line stays out of the reply", () => {
+  const open = "Cart already takes guest.\n```typescript\nexport function checkout() {\n  if";
+  const kept = rewriteReply(open, "update the checkout flow so guests can pay without an account");
+  assert.equal(kept.text, open);
+  assert.equal(kept.changed, false);
+  const gap = `Done.\n\n${fence}\n\nSure! I'd be happy to help.\n\n${fence}`;
+  const closed = rewriteReply(gap, "update the checkout flow so guests can pay without an account");
+  assert.equal(closed.text.includes("Objective:"), false);
+  assert.ok(closed.text.includes(fence));
+  assert.equal(closed.text.includes("happy to help"), false);
+});
+
+test("a reply that replaces an existing signature is stored as no edit", () => {
+  const note = scopeNote(
+    [
+      {
+        name: "charge",
+        kind: "function",
+        file: "src/charge.ts",
+        startLine: 6,
+        endLine: 25,
+        signature: "export function charge(card: Card, amount: number, guest: boolean): Receipt {",
+      },
+    ],
+    "Please don't change the public charge() signature.",
+  );
+  assert.match(note, /charge\(card: Card, amount: number, guest: boolean\)/);
+  const invented = "```typescript\nexport function charge(user: User | undefined, amount: number, cardNumber: string): boolean {\n  console.log(cardNumber);\n}\n```";
+  assert.equal(
+    holdExistingSignatures(invented, note),
+    "No edit is required. charge(card: Card, amount: number, guest: boolean) already meets the goal.",
+  );
+});
+
+test("closed fences stay on separate lines", () => {
+  const reply = `${fence}\n\nSure! I'd be happy to help.\n\n${fence}`;
+  const result = rewriteReply(reply, "update checkout so guests can pay");
+  assert.equal(result.text.includes("}``````"), false);
+  assert.ok(result.text.includes("```\n\n```"));
 });
 
 test("the rewriter drops filler and keeps the patch", () => {

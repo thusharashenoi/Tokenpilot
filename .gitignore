@@ -4,3 +4,5 @@ dist-test/
 *.vsix
 .DS_Store
 problem_explanation_q2jha91frd9.pdf
+.env
+.env.local

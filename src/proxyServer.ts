@@ -19,6 +19,11 @@ export type ProxyOptions = {
   onSpend?: (spend: ProxySpend) => void;
   ideToken?: string;
   onIdeTurn?: (input: IdeTurnInput, signal: AbortSignal) => Promise<IdeTurnOutput>;
+  onChatTurn?: (
+    body: Record<string, unknown>,
+    optimize: boolean,
+    lockModel: boolean,
+  ) => Promise<{ status: number; headers: Record<string, string>; body: Record<string, unknown> }>;
 };
 
 export type RunningProxy = {
@@ -58,6 +63,19 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, optio
   const incoming = await readBody(req);
   if (requestPath(req.url) === "/tokenpilot/turn") {
     await handleIdeTurn(req, res, incoming, options);
+    return;
+  }
+  const arm = req.headers["x-tokenpilot-optimize"];
+  if (req.method === "POST" && (arm === "on" || arm === "off") && options.onChatTurn) {
+    const parsed = parseObject(incoming);
+    if (!parsed) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "The body is not JSON." } }));
+      return;
+    }
+    const result = await options.onChatTurn(parsed, arm === "on", req.headers["x-tokenpilot-lock-model"] === "on");
+    res.writeHead(result.status, result.headers);
+    res.end(JSON.stringify(result.body));
     return;
   }
   let body = incoming;

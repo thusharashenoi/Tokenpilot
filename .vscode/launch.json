@@ -5,7 +5,7 @@
       "name": "Run TokenPilot",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}", "${workspaceFolder}/../tokenpilot-test"],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "preLaunchTask": "build"
     }

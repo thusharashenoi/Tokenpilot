@@ -12,6 +12,7 @@ export type BifrostRequest = {
   localModel?: string;
   maxTokens?: number;
   reasoningEffort?: "low" | "medium";
+  logLabels?: Record<string, string>;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 };
@@ -23,6 +24,7 @@ export type BifrostResult = {
   usedFallback: boolean;
   notifyUser: string | null;
   usage: { promptTokens: number; completionTokens: number; reasoningTokens: number | null } | null;
+  message: Record<string, unknown> | null;
 };
 
 const FAILOVER = new Set([408, 409, 429, 500, 502, 503, 504]);
@@ -146,6 +148,11 @@ async function post(
   omitReasoning = false,
 ): Promise<Response> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
+  for (const [key, value] of Object.entries(input.logLabels ?? {})) {
+    if (key && value) {
+      headers[`x-bf-lh-${key}`] = value;
+    }
+  }
   const body: Record<string, unknown> = {
     model: attempt.model,
     messages: input.messages,
@@ -191,8 +198,10 @@ async function readSuccess(response: Response, requested: string, laterAttempt: 
         reasoningTokens: body.usage.completion_tokens_details?.reasoning_tokens ?? null,
       }
     : null;
+  const rawMessage = body.choices?.[0]?.message;
   return {
-    content: contentOf(body.choices?.[0]?.message),
+    content: contentOf(rawMessage),
+    message: rawMessage && typeof rawMessage === "object" ? (rawMessage as Record<string, unknown>) : null,
     modelUsed,
     provider,
     usedFallback,

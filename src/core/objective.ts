@@ -13,6 +13,8 @@ export type AlignedTurn = {
 
 const RULES = [
   "Answer first. One idea per sentence.",
+  "A plan to read files is not an answer. Give the change in this reply. Do not stop to ask for approval instead of the code.",
+  "If an existing signature already meets the goal, say no edit is required and name that signature.",
   "Drop greetings, recap, and filler.",
   "Keep negations and numbers exact.",
   "Leave code, diffs, commands, and errors unchanged.",
@@ -34,7 +36,7 @@ export function maxTokensFor(effort: ReasoningEffort): number {
     return 320;
   }
   if (effort === "low") {
-    return 500;
+    return MAX_OUTPUT_TOKENS;
   }
   return MAX_OUTPUT_TOKENS;
 }
@@ -63,7 +65,7 @@ function constraintsFrom(userText: string): string[] {
  */
 export function alignObjective(
   messages: ChatMessage[],
-  input: { task: TaskKind; userText: string; files?: string[]; evidence?: string },
+  input: { task: TaskKind; userText: string; files?: string[]; evidence?: string; scope?: string },
 ): AlignedTurn {
   const goal = goalFrom(input.userText);
   const constraints = constraintsFrom(input.userText);
@@ -75,8 +77,11 @@ export function alignObjective(
     `Goal: ${goal}`,
     input.files && input.files.length > 0 ? `In scope: ${input.files.slice(0, 6).join(", ")}` : "",
     constraints.length > 0 ? `Constraints: ${constraints.join(" ")}` : "",
-    "Done when that goal is met and nothing outside it changed.",
-    RULES,
+    input.task === "edit" ? input.scope?.trim() ?? "" : "",
+    input.task === "edit" ? "Done when that goal is met and nothing outside it changed." : "",
+    input.task === "edit"
+      ? RULES
+      : "Answer the user directly. A greeting gets one short greeting.",
     evidence ? `Use only these sources. Do not add other URLs.\n${evidence}` : "",
   ].filter(Boolean);
   const suffix = lines.join("\n");

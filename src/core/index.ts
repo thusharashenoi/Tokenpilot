@@ -15,8 +15,9 @@ export {
 export { compactProse } from "./nlp";
 export { reduceProviderPayload, type ReduceReport } from "./reduce";
 export { alignObjective, maxTokensFor, reasoningFor, type AlignedTurn, type ReasoningEffort } from "./objective";
+export { prepareTurn, type PreparedTurn, type PrepareInput } from "./prepareTurn";
 export { formatTokenPopup, optimizeInput, type OptimizeReport } from "./optimize";
-export { rewriteReply, type RewriteResult } from "./rewrite";
+export { hasUnclosedFence, holdExistingSignatures, rewriteReply, type RewriteResult } from "./rewrite";
 export { fetchTavilyPack, needsExternalFact, tavilyQuery, type TavilyPack } from "./tavily";
 export {
   MAX_OUTPUT_TOKENS,

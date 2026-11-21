@@ -34,7 +34,7 @@
     "commands": [
       {
         "command": "tokenpilot.open",
-        "title": "Open Bench",
+        "title": "Open Chat",
         "category": "TokenPilot"
       },
       {
@@ -46,10 +46,15 @@
         "command": "tokenpilot.setTavilyKey",
         "title": "Set Tavily Key",
         "category": "TokenPilot"
+      },
+      {
+        "command": "tokenpilot.dashboard",
+        "title": "Open Dashboard",
+        "category": "TokenPilot"
       }
     ],
     "viewsContainers": {
-      "activitybar": [
+      "secondarySidebar": [
         {
           "id": "tokenpilot",
           "title": "TokenPilot",
@@ -61,8 +66,20 @@
       "tokenpilot": [
         {
           "type": "webview",
+          "id": "tokenpilot.chatView",
+          "name": "Chat"
+        },
+        {
+          "type": "webview",
           "id": "tokenpilot.benchView",
-          "name": "Bench"
+          "name": "Bench",
+          "visibility": "collapsed"
+        },
+        {
+          "type": "webview",
+          "id": "tokenpilot.dashboardView",
+          "name": "Dashboard",
+          "visibility": "collapsed"
         }
       ]
     },
@@ -113,12 +130,12 @@
         "tokenpilot.smallModel": {
           "type": "string",
           "default": "gemini/gemini-3.5-flash-lite",
-          "description": "Fallback Bifrost model for a light task when the gateway model list cannot be read."
+          "description": "Fallback Bifrost model for a light task. Gemini 3.5 Flash-Lite is the free, low-cost model."
         },
         "tokenpilot.strongModel": {
           "type": "string",
           "default": "gemini/gemini-3.5-flash-lite",
-          "description": "Fallback Bifrost model for an edit or design task when the gateway model list cannot be read."
+          "description": "Fallback Bifrost model for an edit and the chat. Gemini 3.5 Flash-Lite is the free, low-cost model."
         },
         "tokenpilot.budgetUsd": {
           "type": "number",

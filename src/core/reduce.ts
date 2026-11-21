@@ -17,7 +17,21 @@ export type ReduceReport = {
   payload: Record<string, unknown>;
 };
 
-type Msg = { role: string; content: unknown };
+type Msg = { role: string; content: unknown; extra: Record<string, unknown> };
+
+function toMsg(record: Record<string, unknown>): Msg {
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (key !== "role" && key !== "content") {
+      extra[key] = value;
+    }
+  }
+  return { role: String(record.role ?? ""), content: record.content, extra };
+}
+
+function emitMessage(message: Msg): Record<string, unknown> {
+  return { ...message.extra, role: message.role, content: message.content };
+}
 
 function textOf(content: unknown): string {
   if (typeof content === "string") {
@@ -93,16 +107,16 @@ function readMessages(body: Record<string, unknown>): { kind: "chat" | "response
       kind: "chat",
       messages: body.messages
         .filter((item): item is Msg => Boolean(item) && typeof item === "object" && typeof (item as Msg).role === "string")
-        .map((item) => ({ role: item.role, content: item.content })),
+        .map((item) => toMsg(item as Record<string, unknown>)),
     };
   }
   const messages: Msg[] = [];
   if (typeof body.instructions === "string" && body.instructions.trim()) {
-    messages.push({ role: "system", content: body.instructions });
+    messages.push({ role: "system", content: body.instructions, extra: {} });
   }
   const input = body.input;
   if (typeof input === "string") {
-    messages.push({ role: "user", content: input });
+    messages.push({ role: "user", content: input, extra: {} });
   } else if (Array.isArray(input)) {
     for (const item of input) {
       if (!item || typeof item !== "object") {
@@ -112,7 +126,7 @@ function readMessages(body: Record<string, unknown>): { kind: "chat" | "response
       if (typeof record.role !== "string") {
         continue;
       }
-      messages.push({ role: record.role, content: record.content ?? record.text ?? "" });
+      messages.push(toMsg({ ...record, content: record.content ?? record.text ?? "" }));
     }
   }
   return { kind: "responses", messages };
@@ -224,9 +238,9 @@ export function reduceProviderPayload(body: Record<string, unknown>, userText?: 
     .map(({ message }) => ({ role: message.role, text: historyText(message.content) }))
     .filter((turn) => turn.text.trim());
   const history = replaceHistory(priorTurns);
-  const nextMessages: Msg[] = [{ role: "system", content: system }];
+  const nextMessages: Msg[] = [{ role: "system", content: system, extra: {} }];
   if (history) {
-    nextMessages.push({ role: "user", content: history });
+    nextMessages.push({ role: "user", content: history, extra: {} });
   }
   parsed.messages.forEach((message, index) => {
     if (message.role === "system") {
@@ -235,11 +249,15 @@ export function reduceProviderPayload(body: Record<string, unknown>, userText?: 
     if (history && index !== lastUser) {
       return;
     }
-    nextMessages.push({ role: message.role, content: message.role === "user" ? groomedUsers[index] : message.content });
+    nextMessages.push({
+      role: message.role,
+      content: message.role === "user" ? groomedUsers[index] : message.content,
+      extra: message.extra,
+    });
   });
   const payload: Record<string, unknown> = { ...body };
   if (parsed.kind === "chat") {
-    payload.messages = nextMessages;
+    payload.messages = nextMessages.map(emitMessage);
   } else if (typeof body.input === "string") {
     payload.instructions = system;
     const user = nextMessages.find((message) => message.role === "user");
@@ -248,7 +266,7 @@ export function reduceProviderPayload(body: Record<string, unknown>, userText?: 
     payload.instructions = system;
     payload.input = nextMessages
       .filter((message) => message.role !== "system")
-      .map((message) => ({ type: "message", role: message.role, content: message.content }));
+      .map((message) => ({ type: "message", ...message.extra, role: message.role, content: message.content }));
   }
   if (body.tools !== undefined || tools.length > 0) {
     payload.tools = tools;

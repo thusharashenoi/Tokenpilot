@@ -368,6 +368,39 @@ export class TokenPilotSession {
     return `spend:${this.userId()}`;
   }
 
+  workspaceRoot(): string {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+  }
+
+  gatewaySettings(): {
+    bifrostUrl: string;
+    bifrostPath: string;
+    localUrl: string;
+    models: ModelIds;
+    confidential: boolean;
+    budgetRemainingUsd: number;
+    providerUp: boolean;
+  } {
+    const config = vscode.workspace.getConfiguration("tokenpilot");
+    return {
+      bifrostUrl: process.env.BIFROST_URL?.trim() || config.get<string>("bifrostUrl") || "http://localhost:8080",
+      bifrostPath: process.env.BIFROST_PATH?.trim() || config.get<string>("bifrostPath") || "/v1/chat/completions",
+      localUrl: process.env.LOCAL_URL?.trim() || config.get<string>("localUrl") || "http://localhost:11434",
+      models: this.models(),
+      confidential: config.get<boolean>("confidential", false),
+      budgetRemainingUsd: Math.max(0, this.budgetLimit() - this.spent()),
+      providerUp: true,
+    };
+  }
+
+  async noteSpend(usd: number): Promise<void> {
+    if (!Number.isFinite(usd) || usd <= 0) {
+      return;
+    }
+    await this.context.workspaceState.update(this.spendKey(), this.spent() + usd);
+    this.post(this.stateMessage());
+  }
+
   publishState(): void {
     this.refreshStatus();
     this.post(this.stateMessage());

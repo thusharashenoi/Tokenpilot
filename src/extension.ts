@@ -3,22 +3,32 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import * as vscode from "vscode";
+import { ChatSession, ChatView } from "./chat";
+import { DashboardView } from "./dashboard";
 import { formatTokenNotice, type TurnNotice } from "./core/cursorTurn";
-import { clearEndpoint, defaultEndpointFile, writeEndpoint } from "./core/ideClient";
+import { clearEndpoint, defaultEndpointFile } from "./core/ideClient";
 import type { ProxySpend } from "./core/proxy";
 import { listGatewayModels, pickCatalogModel } from "./core/modelCatalog";
 import { DEFAULT_REWRITE_MODEL, rewriteUserPrompt } from "./core/userPrompt";
-import { installCursorHook } from "./installHooks";
+import { loadEnvFile } from "./env";
+import { completeThroughProxy } from "./proxy";
 import { startProxy, type RunningProxy } from "./proxyServer";
 import { BenchView, TokenPilotSession } from "./session";
 
 const latest = path.join(os.homedir(), ".cursor", "tokenpilot", "latest.json");
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  loadEnvFile(path.join(context.extensionPath, ".env"));
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (folder) {
+    loadEnvFile(path.join(folder.uri.fsPath, ".env"));
+  }
   const session = new TokenPilotSession(context);
+  const proxyPort = vscode.workspace.getConfiguration("tokenpilot").get<number>("proxyPort", 8787);
+  const chat = new ChatView(new ChatSession(() => proxyPort, () => session.gatewaySettings()));
   const output = vscode.window.createOutputChannel("TokenPilot");
   const tokenStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 40);
-  tokenStatus.command = "tokenpilot.proxyUrl";
+  tokenStatus.command = "tokenpilot.chatView.focus";
   tokenStatus.text = "$(plug) TokenPilot";
   tokenStatus.tooltip = "TokenPilot proxy";
   tokenStatus.show();
@@ -96,6 +106,17 @@ export function activate(context: vscode.ExtensionContext): void {
         onSpend: (spend) => publish(noticeFrom(spend)),
         ideToken,
         onIdeTurn: (input, signal) => session.handleIdePrompt(input.prompt, signal),
+        onChatTurn: async (body, optimize, lockModel) => {
+          const result = await completeThroughProxy({
+            settings: session.gatewaySettings(),
+            workspaceRoot: session.workspaceRoot(),
+            tavilyKey: process.env.TAVILY_API_KEY?.trim() || (await context.secrets.get("tokenpilot.tavilyApiKey"))?.trim() || "",
+            body,
+            optimize,
+            lockModel,
+          });
+          return { status: result.status, headers: result.headers, body: result.body };
+        },
       });
       if (ticket !== generation) {
         await started.close();
@@ -103,10 +124,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       running = started;
       proxyUrl = `http://127.0.0.1:${running.port}/v1`;
-      writeEndpoint(endpointFile, { port: running.port, token: ideToken });
       tokenStatus.text = `$(plug) TokenPilot :${running.port}`;
-      tokenStatus.tooltip = `IDE prompts are sent by this extension on port ${running.port}.`;
-      output.appendLine(`Extension listening on ${proxyUrl}. IDE prompts are sent here, then forwarded to ${upstream}.`);
+      tokenStatus.tooltip = `TokenPilot chat uses ${proxyUrl}. Cursor chat is not hooked.`;
+      output.appendLine(`Extension listening on ${proxyUrl}. The VS Code chat uses this proxy. Cursor chat is left alone.`);
     } catch (error) {
       if (ticket !== generation) {
         return;
@@ -129,7 +149,9 @@ export function activate(context: vscode.ExtensionContext): void {
     session.statusBar,
     tokenStatus,
     output,
-    vscode.commands.registerCommand("tokenpilot.open", () => session.openPanel()),
+    vscode.commands.registerCommand("tokenpilot.open", () => {
+      void vscode.commands.executeCommand("tokenpilot.chatView.focus");
+    }),
     vscode.commands.registerCommand("tokenpilot.setTavilyKey", async () => {
       const value = await vscode.window.showInputBox({
         title: "Tavily API key",
@@ -157,7 +179,18 @@ export function activate(context: vscode.ExtensionContext): void {
         `Copied ${proxyUrl}. In Cursor Settings → Models, set the OpenAI base URL to that address and add ${small} and ${strong}.`,
       );
     }),
+    vscode.window.registerWebviewViewProvider("tokenpilot.chatView", chat, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.window.registerWebviewViewProvider("tokenpilot.benchView", new BenchView(session)),
+    vscode.window.registerWebviewViewProvider(
+      "tokenpilot.dashboardView",
+      new DashboardView(
+        () => proxyPort,
+        () => session.gatewaySettings(),
+      ),
+    ),
+    vscode.commands.registerCommand("tokenpilot.dashboard", () => {
+      void vscode.commands.executeCommand("tokenpilot.dashboardView.focus");
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("tokenpilot")) {
         session.publishState();
@@ -171,13 +204,6 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     },
   );
-  try {
-    installCursorHook(context.extensionPath);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "TokenPilot could not register its chat hook.";
-    output.appendLine(message);
-  }
-
   fs.mkdirSync(path.dirname(latest), { recursive: true });
   fs.watchFile(latest, { interval: 400 }, showFile);
   context.subscriptions.push({ dispose: () => fs.unwatchFile(latest, showFile) });
