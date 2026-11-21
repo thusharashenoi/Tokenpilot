@@ -1,7 +1,7 @@
 {
   "name": "tokenpilot",
   "displayName": "TokenPilot",
-    "description": "Builds a smaller chat turn from the code graph, routes it by task and budget, and shows the input token count.",
+    "description": "Shrinks the chat turn, then aligns the prompt to the task and shortens the reply that gets stored.",
   "version": "0.1.0",
   "private": true,
   "publisher": "tokenpilot",
@@ -18,7 +18,7 @@
     "reduce": "esbuild src/reduceCli.ts --bundle --outfile=dist/reduce.js --format=cjs --platform=node && node dist/reduce.js",
     "watch": "npm run build -- --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit && esbuild test/optimize.test.ts test/graph.test.ts test/bifrost.test.ts test/hook.test.ts test/harness.test.ts test/reduce.test.ts --bundle --outdir=dist-test --outbase=test --platform=node --format=cjs --external:typescript && node --test dist-test/optimize.test.js dist-test/graph.test.js dist-test/bifrost.test.js dist-test/hook.test.js dist-test/harness.test.js dist-test/reduce.test.js"
+    "test": "tsc --noEmit && esbuild test/optimize.test.ts test/graph.test.ts test/bifrost.test.ts test/hook.test.ts test/harness.test.ts test/reduce.test.ts test/output.test.ts --bundle --outdir=dist-test --outbase=test --platform=node --format=cjs --external:typescript && node --test dist-test/optimize.test.js dist-test/graph.test.js dist-test/bifrost.test.js dist-test/hook.test.js dist-test/harness.test.js dist-test/reduce.test.js dist-test/output.test.js"
   },
   "dependencies": {
     "@toon-format/toon": "^2.1.0",
@@ -40,6 +40,11 @@
       {
         "command": "tokenpilot.reindex",
         "title": "Rebuild Code Graph",
+        "category": "TokenPilot"
+      },
+      {
+        "command": "tokenpilot.setTavilyKey",
+        "title": "Set Tavily Key",
         "category": "TokenPilot"
       }
     ],

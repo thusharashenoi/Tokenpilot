@@ -19,6 +19,19 @@ export function activate(context: vscode.ExtensionContext): void {
     tokenStatus,
     vscode.commands.registerCommand("tokenpilot.open", () => session.openPanel()),
     vscode.commands.registerCommand("tokenpilot.reindex", () => session.reindex()),
+    vscode.commands.registerCommand("tokenpilot.setTavilyKey", async () => {
+      const value = await vscode.window.showInputBox({
+        title: "Tavily API key",
+        prompt: "Used when a task needs a fact the repository does not contain.",
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (!value?.trim()) {
+        return;
+      }
+      await context.secrets.store("tokenpilot.tavilyApiKey", value.trim());
+      void vscode.window.showInformationMessage("Tavily key saved for this workspace.");
+    }),
     vscode.window.registerWebviewViewProvider("tokenpilot.benchView", new BenchView(session)),
     vscode.workspace.onDidSaveTextDocument((document) => session.onSave(document)),
     vscode.workspace.onDidChangeWorkspaceFolders(() => session.reindex()),

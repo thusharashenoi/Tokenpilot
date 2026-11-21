@@ -14,7 +14,10 @@ export {
 } from "./harness";
 export { compactProse } from "./nlp";
 export { reduceProviderPayload, type ReduceReport } from "./reduce";
+export { alignObjective, maxTokensFor, reasoningFor, type AlignedTurn, type ReasoningEffort } from "./objective";
 export { formatTokenPopup, optimizeInput, type OptimizeReport } from "./optimize";
+export { rewriteReply, type RewriteResult } from "./rewrite";
+export { fetchTavilyPack, needsExternalFact, tavilyQuery, type TavilyPack } from "./tavily";
 export {
   MAX_OUTPUT_TOKENS,
   classifyTask,
@@ -28,4 +31,5 @@ export {
   type TaskKind,
 } from "./route";
 export { sampleTask } from "./sample";
+export { countTokens } from "./tokens";
 export type { ChatMessage } from "./types";

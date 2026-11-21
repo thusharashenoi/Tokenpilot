@@ -11,6 +11,7 @@ export type BifrostRequest = {
   localBaseUrl?: string;
   localModel?: string;
   maxTokens?: number;
+  reasoningEffort?: "low" | "medium";
   fetchImpl?: typeof fetch;
 };
 
@@ -20,7 +21,7 @@ export type BifrostResult = {
   provider: string | null;
   usedFallback: boolean;
   notifyUser: string | null;
-  usage: { promptTokens: number; completionTokens: number } | null;
+  usage: { promptTokens: number; completionTokens: number; reasoningTokens: number | null } | null;
 };
 
 const FAILOVER = new Set([408, 409, 429, 500, 502, 503, 504]);
@@ -85,13 +86,19 @@ export async function sendViaBifrost(input: BifrostRequest): Promise<BifrostResu
   }
 
   let lastError = "The model call failed.";
+  let omitReasoning = false;
   for (let index = 0; index < attempts.length; index++) {
     const attempt = attempts[index];
     try {
-      const response = await post(fetchImpl, input, attempt);
+      const response = await post(fetchImpl, input, attempt, omitReasoning);
       if (!response.ok) {
         const detail = await response.text();
         lastError = `Model ${attempt.model} returned ${response.status}. ${detail}`.trim();
+        if (response.status === 400 && input.reasoningEffort && !omitReasoning && /reasoning/i.test(detail)) {
+          omitReasoning = true;
+          index -= 1;
+          continue;
+        }
         if (FAILOVER.has(response.status)) {
           continue;
         }
@@ -124,13 +131,21 @@ export async function sendViaBifrost(input: BifrostRequest): Promise<BifrostResu
   throw new Error(lastError);
 }
 
-async function post(fetchImpl: typeof fetch, input: BifrostRequest, attempt: Attempt): Promise<Response> {
+async function post(
+  fetchImpl: typeof fetch,
+  input: BifrostRequest,
+  attempt: Attempt,
+  omitReasoning = false,
+): Promise<Response> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const body: Record<string, unknown> = {
     model: attempt.model,
     messages: input.messages,
     max_tokens: input.maxTokens ?? 800,
   };
+  if (!omitReasoning && input.reasoningEffort) {
+    body.reasoning_effort = input.reasoningEffort;
+  }
   if (attempt.cloud && input.fallbacks.length > 0) {
     body.fallbacks = input.fallbacks.filter((model) => model !== attempt.model);
   }
@@ -147,7 +162,11 @@ async function post(fetchImpl: typeof fetch, input: BifrostRequest, attempt: Att
 async function readSuccess(response: Response, requested: string, laterAttempt: boolean): Promise<BifrostResult> {
   const body = (await response.json()) as {
     choices?: Array<{ message?: unknown }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      completion_tokens_details?: { reasoning_tokens?: number };
+    };
     extra_fields?: { routing_info?: { is_fallback?: boolean; model?: string; provider?: string } };
   };
   const info = body.extra_fields?.routing_info;
@@ -160,6 +179,7 @@ async function readSuccess(response: Response, requested: string, laterAttempt: 
     ? {
         promptTokens: body.usage.prompt_tokens ?? 0,
         completionTokens: body.usage.completion_tokens ?? 0,
+        reasoningTokens: body.usage.completion_tokens_details?.reasoning_tokens ?? null,
       }
     : null;
   return {

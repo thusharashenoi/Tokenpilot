@@ -2,17 +2,23 @@ import crypto from "crypto";
 import * as vscode from "vscode";
 import {
   GraphIndex,
-  MAX_OUTPUT_TOKENS,
+  alignObjective,
+  countTokens,
   estimateCost,
+  fetchTavilyPack,
   formatTokenPopup,
   harnessFor,
   isAgentId,
+  needsExternalFact,
   optimizeInput,
+  rewriteReply,
   routeTurn,
   sampleTask,
   sendViaBifrost,
+  tavilyQuery,
   toOpenAITools,
   type AgentId,
+  type AlignedTurn,
   type ModelIds,
 } from "./core";
 import { benchHtml } from "./panel/html";
@@ -28,6 +34,8 @@ export class TokenPilotSession {
     route: ReturnType<typeof routeTurn>;
     hit: ReturnType<GraphIndex["queryText"]>;
     limit: number;
+    output: AlignedTurn;
+    urls: string[];
   } | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -41,7 +49,13 @@ export class TokenPilotSession {
     this.listeners.add(listener);
     listener(this.stateMessage());
     if (this.last) {
-      listener({ type: "report", report: this.last.report, route: this.last.route, hit: this.last.hit });
+      listener({
+        type: "report",
+        report: this.last.report,
+        route: this.last.route,
+        hit: this.last.hit,
+        output: this.preview(this.last.output),
+      });
     }
     return () => this.listeners.delete(listener);
   }
@@ -106,7 +120,8 @@ export class TokenPilotSession {
       } else if (message.type === "lookup") {
         this.post({ type: "lookup", hit: this.index.querySymbol(message.name) });
       } else if (message.type === "optimize") {
-        this.build(message.prompt, message.confidential, message.budgetUsd, message.primaryUp, message.agent);
+        await this.saveGateway(message);
+        await this.build(message.prompt, message.confidential, message.budgetUsd, message.primaryUp, message.agent);
       } else if (message.type === "send") {
         await this.send();
       }
@@ -115,7 +130,7 @@ export class TokenPilotSession {
     }
   }
 
-  private build(prompt: string, confidential: boolean, budgetUsd: number, primaryUp: boolean, agent?: AgentId): void {
+  private async build(prompt: string, confidential: boolean, budgetUsd: number, primaryUp: boolean, agent?: AgentId): Promise<void> {
     const task = prompt.trim();
     if (!task) {
       this.post({ type: "error", message: "Write a task first." });
@@ -133,16 +148,27 @@ export class TokenPilotSession {
       fullFileTokens: hit.fullFileTokens,
       agentLabel: harness.label,
     });
+    const evidence = await this.externalEvidence(report.userText, hit.pack);
+    const output = alignObjective(report.messages, {
+      task: report.task,
+      userText: report.userText,
+      files: hit.files,
+      evidence: evidence.text,
+    });
+    output.actions = [...evidence.actions, ...output.actions];
     const route = routeTurn({
       confidential,
       taskKind: report.task,
-      promptTokens: report.tokens.optimized,
+      promptTokens:
+        report.tokens.optimized +
+        countTokens(output.messages.find((message) => message.role === "system")?.content ?? "") -
+        countTokens(report.systemPrompt),
       budgetRemainingUsd: limit - this.spent(),
       providerUp: primaryUp,
       models: this.models(),
     });
-    this.last = { report, route, hit, limit };
-    this.post({ type: "report", report, route, hit });
+    this.last = { report, route, hit, limit, output, urls: evidence.urls };
+    this.post({ type: "report", report, route, hit, output: this.preview(output) });
     this.showTokenPopup(report);
   }
 
@@ -155,31 +181,44 @@ export class TokenPilotSession {
     const config = vscode.workspace.getConfiguration("tokenpilot");
     const models = this.models();
     const decision = this.last.route;
+    const aligned = this.last.output;
     const result = await sendViaBifrost({
       via: decision.via === "local" ? "local" : "bifrost",
       baseUrl: config.get<string>("bifrostUrl") || "http://localhost:8080",
       path: config.get<string>("bifrostPath") || "/v1/chat/completions",
       model,
       fallbacks: decision.fallbacks,
-      messages: this.last.report.messages,
+      messages: aligned.messages,
       tools: toOpenAITools(this.last.report.tools),
       localBaseUrl: config.get<string>("localUrl") || "http://localhost:11434",
       localModel: models.local,
-      maxTokens: MAX_OUTPUT_TOKENS,
+      maxTokens: aligned.maxTokens,
+      reasoningEffort: aligned.reasoning === "none" ? undefined : aligned.reasoning,
     });
+    const rewritten = rewriteReply(result.content, aligned.goal, this.last.urls.length > 0 ? this.last.urls : undefined);
     const tier = result.modelUsed === models.local ? "local" : result.modelUsed === models.small ? "small" : "strong";
     const cost = result.usage
       ? estimateCost(tier, result.usage.promptTokens, result.usage.completionTokens)
       : decision.estimatedCostUsd;
     const spent = this.spent() + cost;
     await this.context.workspaceState.update(this.spendKey(), spent);
+    const outputActions = rewritten.changed
+      ? [`Reply ${rewritten.beforeTokens} → ${rewritten.afterTokens} tokens before it is stored.`]
+      : ["Reply already matched the objective."];
+    if (rewritten.droppedUrls.length > 0) {
+      outputActions.push(`Dropped ${rewritten.droppedUrls.length} URL${rewritten.droppedUrls.length === 1 ? "" : "s"} that were not in the Tavily pack.`);
+    }
     this.post({
       type: "sent",
-      content: result.content,
+      content: rewritten.text,
       model: result.modelUsed,
       notice: result.notifyUser ?? decision.notifyUser,
       spentUsd: spent,
       remainingUsd: Math.max(0, this.last.limit - spent),
+      completionTokens: result.usage?.completionTokens ?? null,
+      rewrittenTokens: rewritten.afterTokens,
+      reasoningTokens: result.usage?.reasoningTokens ?? null,
+      outputActions,
     });
     this.post(this.stateMessage());
     this.showTokenPopup(
@@ -206,6 +245,64 @@ export class TokenPilotSession {
       confidential: vscode.workspace.getConfiguration("tokenpilot").get<boolean>("confidential", false),
       models: this.models(),
     };
+  }
+
+  private preview(output: AlignedTurn) {
+    return {
+      messages: output.messages,
+      reasoning: output.reasoning,
+      maxTokens: output.maxTokens,
+      actions: output.actions,
+      goal: output.goal,
+    };
+  }
+
+  private async externalEvidence(userText: string, graphPack: string): Promise<{ text: string; urls: string[]; actions: string[] }> {
+    if (!needsExternalFact(userText, graphPack)) {
+      return { text: "", urls: [], actions: [] };
+    }
+    const key = await this.tavilyKey();
+    if (!key) {
+      return { text: "", urls: [], actions: ["Tavily key is not set. This turn will not search."] };
+    }
+    try {
+      const pack = await fetchTavilyPack(tavilyQuery(userText), key);
+      if (!pack.text) {
+        return { text: "", urls: [], actions: ["Tavily returned no sources."] };
+      }
+      return { text: pack.text, urls: pack.urls, actions: [] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Tavily search failed.";
+      return { text: "", urls: [], actions: [`${message} Reasoning stays on the task.`] };
+    }
+  }
+
+  private async tavilyKey(): Promise<string> {
+    const fromEnv = process.env.TAVILY_API_KEY?.trim();
+    if (fromEnv) {
+      return fromEnv;
+    }
+    return (await this.context.secrets.get("tokenpilot.tavilyApiKey"))?.trim() ?? "";
+  }
+
+  private async saveGateway(message: { localModel?: string; smallModel?: string; strongModel?: string; budgetUsd: number }): Promise<void> {
+    const config = vscode.workspace.getConfiguration("tokenpilot");
+    const target = vscode.ConfigurationTarget.Workspace;
+    const local = message.localModel?.trim();
+    const small = message.smallModel?.trim();
+    const strong = message.strongModel?.trim();
+    if (local) {
+      await config.update("localModel", local, target);
+    }
+    if (small) {
+      await config.update("smallModel", small, target);
+    }
+    if (strong) {
+      await config.update("strongModel", strong, target);
+    }
+    if (Number.isFinite(message.budgetUsd) && message.budgetUsd >= 0) {
+      await config.update("budgetUsd", message.budgetUsd, target);
+    }
   }
 
   private models(): ModelIds {
