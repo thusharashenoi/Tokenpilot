@@ -61,7 +61,7 @@ export class ChatSession {
       pending.text = card.error ? card.error : card.reply || "No reply.";
       pending.meta = card.error
         ? undefined
-        : `${mode === "tokenpilot" ? "TokenPilot" : "Bare Bifrost"} · ${card.model} · prompt ${card.promptBefore} → ${card.promptAfter} · completion ${card.completionTokens ?? "—"}`;
+        : `${mode === "tokenpilot" ? "Custom harness" : "Cursor harness"} · ${card.model} · prompt ${card.promptBefore} → ${card.promptAfter} · completion ${card.completionTokens ?? "—"}${card.stages ? ` · ${card.stages}` : ""}`;
     } catch (error) {
       pending.pending = false;
       pending.text = error instanceof Error ? error.message : "The send failed.";
@@ -81,35 +81,31 @@ export class ChatSession {
     }
   }
 
-  private history(): Array<{ role: "user" | "assistant"; content: string }> {
-    return this.messages
-      .filter((message) => !message.pending && message.text && message.text !== "Working…")
-      .slice(0, -1)
-      .map((message) => ({ role: message.role, content: message.text }));
-  }
-
   private async post(task: string, mode: ChatMode): Promise<{
     model: string;
     promptBefore: number;
     promptAfter: number;
     completionTokens: number | null;
+    stages: string | null;
     reply: string;
     error: string | null;
   }> {
-    const harness = harnessFor("cursor");
-    const prior = this.history().filter((message) => message.content !== task || message.role !== "user");
+    const bare = mode !== "tokenpilot";
+    const harness = bare ? harnessFor("cursor") : null;
     const response = await fetch(`http://127.0.0.1:${this.port()}/v1/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-tokenpilot-optimize": mode === "tokenpilot" ? "on" : "off",
+        "x-tokenpilot-optimize": bare ? "off" : "on",
         "x-tokenpilot-lock-model": "on",
       },
       body: JSON.stringify({
         model: this.settings().models.strong,
         stream: false,
-        messages: [{ role: "system", content: harness.systemPrompt }, ...prior, { role: "user", content: task }],
-        tools: toOpenAITools(harness.tools),
+        messages: harness
+          ? [{ role: "system", content: harness.systemPrompt }, { role: "user", content: task }]
+          : [{ role: "user", content: task }],
+        tools: harness ? toOpenAITools(harness.tools) : undefined,
       }),
     });
     const payload = (await response.json()) as {
@@ -130,6 +126,7 @@ export class ChatSession {
       promptBefore: header("x-tokenpilot-prompt-before") ?? 0,
       promptAfter: header("x-tokenpilot-prompt-after") ?? 0,
       completionTokens: header("x-tokenpilot-completion"),
+      stages: response.headers.get("x-tokenpilot-stages"),
       reply: payload.choices?.[0]?.message?.content ?? "",
       error: payload.error?.message ?? (response.ok ? null : `HTTP ${response.status}`),
     };
@@ -202,8 +199,8 @@ function chatHtml(cspSource: string, nonce: string): string {
     <div class="route-row">
       <label for="mode">Route</label>
       <select id="mode">
-        <option value="bare">Bare Bifrost</option>
-        <option value="tokenpilot">TokenPilot</option>
+        <option value="bare">Bare Bifrost (Cursor harness)</option>
+        <option value="tokenpilot">Custom harness</option>
       </select>
     </div>
     <textarea id="input" rows="2" placeholder="Ask about this repository"></textarea>

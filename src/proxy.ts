@@ -2,7 +2,7 @@ import http from "http";
 import { sendViaBifrost, type BifrostResult } from "./core/bifrost";
 import { answerReady, followUpForPlan, replyText, toolCallsFrom } from "./core/finishReply";
 import { prepareTurn } from "./core/prepareTurn";
-import { holdExistingSignatures, rewriteReply } from "./core/rewrite";
+import { holdExistingSignatures, rewriteReply, stateNoEdit } from "./core/rewrite";
 import { estimateCost, type ModelIds, type ModelTier } from "./core/route";
 import { countTokens } from "./core/tokens";
 
@@ -186,7 +186,7 @@ export async function completeThroughProxy(input: {
     let stored = countTokens(content);
     if (input.optimize && !hasTools) {
       const rewritten = rewriteReply(content, prepared.goal, prepared.urls.length > 0 ? prepared.urls : undefined);
-      content = holdExistingSignatures(rewritten.text, prepared.scope);
+      content = stateNoEdit(holdExistingSignatures(rewritten.text, prepared.scope), prepared.scope);
       stored = countTokens(content);
     }
     const completionTokens = result.usage ? completion : countTokens(result.content);

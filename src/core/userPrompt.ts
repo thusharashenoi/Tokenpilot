@@ -1,7 +1,7 @@
 import { compactProse } from "./nlp";
 import { countTokens } from "./tokens";
 
-export const DEFAULT_REWRITE_MODEL = "qwen2.5:0.5b";
+export const DEFAULT_REWRITE_MODEL = "qwen2.5:1.5b";
 
 const REWRITE_SYSTEM = [
   "Rewrite the user task into the shortest prompt that keeps every requirement.",
@@ -350,18 +350,28 @@ async function complete(options: RewriteOptions, prose: string): Promise<string>
   return completionText(await response.json());
 }
 
-export async function rewriteUserPrompt(text: string, options: RewriteOptions = {}): Promise<string> {
+export type RewriteTrace = {
+  text: string;
+  source: "skipped" | "failed" | "dropped" | "kept";
+};
+
+export async function traceUserPrompt(text: string, options: RewriteOptions = {}): Promise<RewriteTrace> {
   const fallback = condenseUserPrompt(text);
   if (!options.url || countTokens(proseOf(text)) <= 40) {
-    return fallback;
+    return { text: fallback, source: "skipped" };
   }
   try {
     const raw = await complete(options, proseOf(compactProse(text)));
     if (!raw.trim()) {
-      return fallback;
+      return { text: fallback, source: "dropped" };
     }
-    return settleRewrite(text, raw);
+    const settled = settleRewrite(text, raw);
+    return { text: settled, source: settled === fallback ? "dropped" : "kept" };
   } catch {
-    return fallback;
+    return { text: fallback, source: "failed" };
   }
+}
+
+export async function rewriteUserPrompt(text: string, options: RewriteOptions = {}): Promise<string> {
+  return (await traceUserPrompt(text, options)).text;
 }

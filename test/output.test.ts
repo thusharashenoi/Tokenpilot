@@ -5,7 +5,7 @@ import { answerReady } from "../src/core/finishReply";
 import { alignObjective, reasoningFor } from "../src/core/objective";
 import { optimizeInput } from "../src/core/optimize";
 import { scopeNote } from "../src/core/graph";
-import { holdExistingSignatures, rewriteReply } from "../src/core/rewrite";
+import { holdExistingSignatures, rewriteReply, stateNoEdit } from "../src/core/rewrite";
 import { fetchTavilyPack, needsExternalFact } from "../src/core/tavily";
 import type { ChatMessage } from "../src/core/types";
 
@@ -92,6 +92,37 @@ test("a reply that replaces an existing signature is stored as no edit", () => {
   assert.equal(
     holdExistingSignatures(invented, note),
     "No edit is required. charge(card: Card, amount: number, guest: boolean) already meets the goal.",
+  );
+  assert.equal(note.includes("{"), false);
+  const echoed = "No edit is required and name the signature. - src/charge.ts: export function charge(card: Card, amount: number, guest: boolean): Receipt { - src/checkout.ts: export function checkout(lines: CartLine[], card: Card, guest: boolean): Receipt {";
+  const both = scopeNote(
+    [
+      {
+        name: "charge",
+        kind: "function",
+        file: "src/charge.ts",
+        startLine: 6,
+        endLine: 25,
+        signature: "export function charge(card: Card, amount: number, guest: boolean): Receipt {",
+      },
+      {
+        name: "checkout",
+        kind: "function",
+        file: "src/checkout.ts",
+        startLine: 5,
+        endLine: 20,
+        signature: "export function checkout(lines: CartLine[], card: Card, guest: boolean): Receipt {",
+      },
+    ],
+    "update the checkout flow and do not change charge()",
+  );
+  assert.equal(
+    stateNoEdit(echoed, both),
+    [
+      "No edit is required.",
+      "charge(card: Card, amount: number, guest: boolean): Receipt already meets the goal.",
+      "checkout(lines: CartLine[], card: Card, guest: boolean): Receipt already meets the goal.",
+    ].join("\n"),
   );
 });
 

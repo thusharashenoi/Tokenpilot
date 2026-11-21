@@ -4,7 +4,7 @@ import test from "node:test";
 import { reduceProviderPayload } from "../src/core/reduce";
 import { countTokens } from "../src/core/tokens";
 import { prepareUpstreamBody } from "../src/core/proxy";
-import { condenseUserPrompt, rewriteUserPrompt, settleRewrite } from "../src/core/userPrompt";
+import { condenseUserPrompt, rewriteUserPrompt, settleRewrite, traceUserPrompt } from "../src/core/userPrompt";
 
 const task = [
   "Hey! I was wondering if you could please help me out with this.",
@@ -137,6 +137,16 @@ test("a local model rewrites the user prompt and a failure falls back", async ()
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("a draft that drops a constraint is marked dropped", async () => {
+  const trace = await traceUserPrompt(task, {
+    url: "http://ollama.local",
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: "Update the checkout flow." } }] }), { status: 200 }),
+  });
+  assert.equal(trace.source, "dropped");
+  assert.equal(trace.text, condenseUserPrompt(task));
 });
 
 test("a short prompt does not call the model", async () => {

@@ -116,6 +116,24 @@ function compressProse(prose: string, goal: Set<string>): string {
   return "";
 }
 
+function declaredSignatures(note: string): string[] {
+  return [...note.matchAll(/^- \S+:\s*((?:export\s+)?(?:async\s+)?function\s+\w+\s*\([^)]*\)[^.\n]*)/gm)]
+    .map((match) => match[1].replace(/\s+/g, " ").trim().replace(/^(?:export\s+)?(?:async\s+)?function\s+/, "").replace(/\s*\{$/, ""));
+}
+
+export function stateNoEdit(reply: string, note: string): string {
+  const signatures = declaredSignatures(note);
+  if (signatures.length === 0 || reply.includes("```")) {
+    return reply;
+  }
+  const echoed = /name the signature/i.test(reply);
+  const dumped = /[\w./-]+\.ts:\s*(?:export\s+)?(?:async\s+)?function/.test(reply);
+  if (!echoed && !dumped) {
+    return reply;
+  }
+  return ["No edit is required.", ...signatures.map((signature) => `${signature} already meets the goal.`)].join("\n");
+}
+
 export function holdExistingSignatures(reply: string, note: string): string {
   const declared = [...note.matchAll(/^- \S+:\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)/gm)];
   for (const match of declared) {

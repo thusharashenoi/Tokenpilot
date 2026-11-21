@@ -50,6 +50,10 @@ export type GraphStats = {
 
 export type GraphSymbol = Pick<SymbolNode, "name" | "owner" | "kind" | "file" | "startLine" | "endLine" | "signature">;
 
+function displaySignature(signature: string): string {
+  return signature.replace(/\s+/g, " ").trim().replace(/\s*\{$/, "");
+}
+
 export function scopeNote(symbols: GraphSymbol[], userText: string): string {
   const text = userText.toLowerCase();
   const named = symbols.filter((symbol) => {
@@ -60,9 +64,9 @@ export function scopeNote(symbols: GraphSymbol[], userText: string): string {
   if (picked.length === 0) {
     return "";
   }
-  const lines = picked.map((symbol) => `- ${symbol.file}: ${symbol.signature.replace(/\s+/g, " ").trim()}`);
+  const lines = picked.map((symbol) => `- ${symbol.file}: ${displaySignature(symbol.signature)}`);
   return [
-    "Existing signatures. Use these. Do not call a tool. If they already meet the goal, say no edit is required and name the signature. Do not invent a replacement.",
+    "Existing signatures. Use these. Do not call a tool. Do not invent a replacement.",
     ...lines,
   ].join("\n");
 }

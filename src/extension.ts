@@ -11,6 +11,7 @@ import type { ProxySpend } from "./core/proxy";
 import { listGatewayModels, pickCatalogModel } from "./core/modelCatalog";
 import { DEFAULT_REWRITE_MODEL, rewriteUserPrompt } from "./core/userPrompt";
 import { loadEnvFile } from "./env";
+import { customTaskFrom, runCustomHarness } from "./core/customHarness";
 import { completeThroughProxy } from "./proxy";
 import { startProxy, type RunningProxy } from "./proxyServer";
 import { BenchView, TokenPilotSession } from "./session";
@@ -107,8 +108,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         ideToken,
         onIdeTurn: (input, signal) => session.handleIdePrompt(input.prompt, signal),
         onChatTurn: async (body, optimize, lockModel) => {
+          const settings = session.gatewaySettings();
+          if (optimize) {
+            const config = vscode.workspace.getConfiguration("tokenpilot");
+            const result = await runCustomHarness({
+              task: customTaskFrom(body),
+              localUrl: settings.localUrl,
+              rewriteModel: config.get<string>("rewriteModel") || DEFAULT_REWRITE_MODEL,
+              bifrostUrl: settings.bifrostUrl,
+              bifrostPath: settings.bifrostPath,
+              model: settings.models.strong,
+              workspaceRoot: session.workspaceRoot(),
+            });
+            return { status: result.status, headers: result.headers, body: result.body };
+          }
           const result = await completeThroughProxy({
-            settings: session.gatewaySettings(),
+            settings,
             workspaceRoot: session.workspaceRoot(),
             tavilyKey: process.env.TAVILY_API_KEY?.trim() || (await context.secrets.get("tokenpilot.tavilyApiKey"))?.trim() || "",
             body,

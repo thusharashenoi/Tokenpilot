@@ -18,7 +18,7 @@
     "reduce": "esbuild src/reduceCli.ts --bundle --outfile=dist/reduce.js --format=cjs --platform=node && node dist/reduce.js",
     "watch": "npm run build -- --watch",
     "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit && esbuild test/optimize.test.ts test/graph.test.ts test/bifrost.test.ts test/hook.test.ts test/harness.test.ts test/reduce.test.ts test/output.test.ts test/proxy.test.ts test/ide.test.ts test/userPrompt.test.ts test/history.test.ts test/jev.test.ts test/modelCatalog.test.ts --bundle --outdir=dist-test --outbase=test --platform=node --format=cjs --external:typescript && node --test dist-test/optimize.test.js dist-test/graph.test.js dist-test/bifrost.test.js dist-test/hook.test.js dist-test/harness.test.js dist-test/reduce.test.js dist-test/output.test.js dist-test/proxy.test.js dist-test/ide.test.js dist-test/userPrompt.test.js dist-test/history.test.js dist-test/jev.test.js dist-test/modelCatalog.test.js"
+    "test": "tsc --noEmit && esbuild test/optimize.test.ts test/graph.test.ts test/bifrost.test.ts test/hook.test.ts test/harness.test.ts test/reduce.test.ts test/output.test.ts test/proxy.test.ts test/ide.test.ts test/userPrompt.test.ts test/history.test.ts test/jev.test.ts test/modelCatalog.test.ts test/customHarness.test.ts --bundle --outdir=dist-test --outbase=test --platform=node --format=cjs --external:typescript && node --test dist-test/optimize.test.js dist-test/graph.test.js dist-test/bifrost.test.js dist-test/hook.test.js dist-test/harness.test.js dist-test/reduce.test.js dist-test/output.test.js dist-test/proxy.test.js dist-test/ide.test.js dist-test/userPrompt.test.js dist-test/history.test.js dist-test/jev.test.js dist-test/modelCatalog.test.js dist-test/customHarness.test.js"
   },
   "dependencies": {
     "@toon-format/toon": "^2.1.0",
@@ -124,8 +124,8 @@
         },
         "tokenpilot.rewriteModel": {
           "type": "string",
-          "default": "qwen2.5:0.5b",
-          "description": "Small open model on tokenpilot.localUrl that rewrites the user prompt before it is sent. Pull it with: ollama pull qwen2.5:0.5b. If it is not running, the prompt is still condensed locally."
+          "default": "qwen2.5:1.5b",
+          "description": "Small open model on tokenpilot.localUrl that rewrites the user prompt before it is sent. Pull it with: ollama pull qwen2.5:1.5b. If it is not running, the prompt is still condensed locally."
         },
         "tokenpilot.smallModel": {
           "type": "string",
